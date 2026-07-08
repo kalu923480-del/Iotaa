@@ -107,6 +107,7 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 title="Iota Premium (3 Months)",
                 description="Full premium access for 90 days! Games, economy, custom emoji & more!",
                 payload="premium_stars_3m",
+                provider_token="",
                 currency="XTR",
                 prices=[LabeledPrice("Iota Premium 3 Months", PREMIUM_PRICE_STARS)],
             )
@@ -124,6 +125,7 @@ async def fpay_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title="Iota Premium (3 Months)",
             description="Full premium access for 90 days! Economy, games, AI, custom emoji & more!",
             payload="premium_stars_3m",
+            provider_token="",
             currency="XTR",
             prices=[LabeledPrice("Iota Premium (90 days)", PREMIUM_PRICE_STARS)],
         )
@@ -149,6 +151,7 @@ async def fgems_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title="Iota Gems (1 Gem)",
             description=f"1 Gem = {fmt(GEMS_PRICE_COINS)} in-game coins!",
             payload="gems_stars_1",
+            provider_token="",
             currency="XTR",
             prices=[LabeledPrice("1 Iota Gem", GEMS_PRICE_STARS)],
         )

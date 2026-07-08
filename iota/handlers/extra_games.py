@@ -715,6 +715,13 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💓 Premium: <b>{'Yes ✅' if d['is_premium'] else 'No'}</b>\n"
         f"(Use /shop to spend coins)"
     )
+    try:
+        from handlers.gems_store import owned_perks_line
+        perks = owned_perks_line(d)
+        if perks:
+            caption += f"\n\n✨ {perks}"
+    except Exception:
+        pass
     # Show the user's actual Telegram profile picture alongside their
     # stats. Falls back to text-only automatically if no PFP is set.
     await send_profile_photo_or_text(msg, context, tu.id, caption)
@@ -875,7 +882,7 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "💰 <b>Top Rich:</b>\n"
     for i, r in enumerate(rich_rows):
         name = r.get("full_name") or r.get("username") or "User"
-        text += f"{medals[i]} {name} — {fmt(r['balance'])}\n"
+        text += f"{medals[i]} {name} — {fmt(r.get('tb', r.get('balance', 0)))}\n"
 
     text += "\n💀 <b>Top Killers:</b>\n"
     for i, r in enumerate(kill_rows):

@@ -36,9 +36,12 @@ def main():
         gcheck_cmd, granks_cmd, auto_delete_handler, daily_remind_callback,
         auto_daily_job, weekly_cmd, monthly_cmd
     )
-    from handlers.premium      import (
+    from handlers.premium import (
         pay_cmd, fpay_cmd, fgems_cmd, setemoji_cmd, check_cmd,
         pay_callback, precheckout_callback, successful_payment_handler
+    )
+    from handlers.gems_store import (
+        gems2coins_cmd, gemstore_cmd, buygem_cmd,
     )
     from handlers.games        import (
         game_menu_cmd, open_cmd, close_cmd, leaders_cmd,
@@ -166,6 +169,15 @@ def main():
         acceptall_cmd, rejectall_cmd, join_request_callback,
         chat_join_request_handler,
     )
+    from handlers.new_suite import (
+        pick_cmd, rand_cmd, uptime_cmd,
+        gstats_cmd, adminlist_cmd, chatid_cmd,
+        leave_cmd, setbotname_cmd,
+    )
+    from handlers.fun_text import (
+        clap_cmd, uwu_cmd, vapor_cmd, bubble_cmd, regional_cmd,
+        leet_cmd, zalgo_cmd, hot_cmd, rate_cmd, nhie_cmd,
+    )
     from handlers.legal        import terms_cmd, refund_cmd, rules_legal_cmd
     from handlers.new_features_v2 import (
         pin_cmd, unpin_cmd, purge_cmd, avatar_cmd,
@@ -190,6 +202,34 @@ def main():
         ("rejectjoin",   rejectjoin_cmd),
         ("acceptall",    acceptall_cmd),
         ("rejectall",    rejectall_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── Extra Fun Commands (text toys + social ratings) ──────────────
+    for c, f in [
+        ("clap",     clap_cmd),
+        ("uwu",      uwu_cmd),
+        ("vapor",    vapor_cmd),
+        ("bubble",   bubble_cmd),
+        ("regional", regional_cmd),
+        ("leet",     leet_cmd),
+        ("zalgo",    zalgo_cmd),
+        ("hot",      hot_cmd),
+        ("rate",     rate_cmd),
+        ("nhie",     nhie_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── Extra Features Suite (user / admin / owner) ──────────────────
+    for c, f in [
+        ("pick",     pick_cmd),
+        ("rand",     rand_cmd),
+        ("uptime",   uptime_cmd),
+        ("gstats",   gstats_cmd),
+        ("adminlist", adminlist_cmd),
+        ("chatid",   chatid_cmd),
+        ("leave",    leave_cmd),
+        ("setbotname", setbotname_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 
@@ -275,6 +315,14 @@ def main():
     for c, f in [
         ("pay",pay_cmd),("fpay",fpay_cmd),("fgems",fgems_cmd),
         ("setemoji",setemoji_cmd),("check",check_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── Gems Economy (convert + gems-only store) ────────────────────
+    for c, f in [
+        ("gems2coins", gems2coins_cmd),
+        ("gemstore",   gemstore_cmd),
+        ("buygem",     buygem_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 

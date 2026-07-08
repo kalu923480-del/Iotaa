@@ -282,7 +282,7 @@ async def bal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.reply_html(
         f"👤 {bold_sc('Name')}: {mention(tu)}\n"
-        f"💰 {bold_sc('Balance')}: {fmt(d['balance'])}\n"
+        f"💰 {bold_sc('Balance')}: {fmt(d.get('balance', 0))}\n"
         f"🏆 {bold_sc('Global Rank')}: #{rank}\n"
         f"🛡️ {bold_sc('Status')}: {status}\n"
         f"⚔️ {bold_sc('Kills')}: {d['kills']}\n"
@@ -532,7 +532,7 @@ async def toprich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i, r in enumerate(rows):
         icon = r.get("premium_emoji") or ("💓" if r.get("is_premium") else "👤")
         name = r.get("full_name") or r.get("username") or "User"
-        text += f"{medals[i]} {icon} {mention_id(r['_id'],name)}: <b>{fmt(r['balance'])}</b>\n"
+        text += f"{medals[i]} {icon} {mention_id(r['_id'],name)}: <b>{fmt(r.get('tb', r.get('balance', 0)))}</b>\n"
     text += f"\n💓 = {sc('Premium')} • 👤 = {sc('Normal')}\n✅ {sc('Upgrade To Premium')}: /pay"
     await update.message.reply_html(text)
 
@@ -619,6 +619,13 @@ async def pfp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💎 {sc('Gems')}: {d.get('gems',0)}\n"
         f"💼 {sc('Wallet')}: {fmt(d.get('wallet',0))}"
     )
+    try:
+        from handlers.gems_store import owned_perks_line
+        perks = owned_perks_line(d)
+        if perks:
+            caption += f"\n\n✨ {perks}"
+    except Exception:
+        pass
     await send_profile_photo_or_text(msg, context, tu.id, caption)
 
 @economy_gate

@@ -120,9 +120,15 @@ async def add_balance(uid, amt):
     await get_db().users.update_one({"_id":uid},{"$inc":{"balance":amt}})
 
 async def get_top_rich(n=10):
-    return await get_db().users.find(
-        {"is_banned":{"$ne":True}},sort=[("balance",-1)],limit=n
-    ).to_list(n)
+    pipeline = [
+        {"$match": {"is_banned": {"$ne": True}}},
+        {"$addFields": {"tb": {"$add": [
+            {"$ifNull": ["$balance", 0]}, {"$ifNull": ["$wallet", 0]}
+        ]}}},
+        {"$sort": {"tb": -1}},
+        {"$limit": n},
+    ]
+    return await get_db().users.aggregate(pipeline).to_list(n)
 
 async def get_top_kill(n=10):
     return await get_db().users.find(
@@ -131,10 +137,27 @@ async def get_top_kill(n=10):
 
 async def get_user_rank(uid):
     u = await get_user(uid)
-    c = await get_db().users.count_documents(
-        {"balance":{"$gt":u["balance"]},"is_banned":{"$ne":True}}
-    )
+    if not u:
+        return 0
+    total = (u.get("balance", 0) or 0) + (u.get("wallet", 0) or 0)
+    pipeline = [
+        {"$match": {"is_banned": {"$ne": True}}},
+        {"$addFields": {"tb": {"$add": [
+            {"$ifNull": ["$balance", 0]}, {"$ifNull": ["$wallet", 0]}
+        ]}}},
+        {"$match": {"tb": {"$gt": total}}},
+        {"$count": "c"},
+    ]
+    res = await get_db().users.aggregate(pipeline).to_list(1)
+    c = res[0]["c"] if res else 0
     return c + 1
+
+
+async def get_total_balance(uid) -> int:
+    u = await get_user(uid)
+    if not u:
+        return 0
+    return (u.get("balance", 0) or 0) + (u.get("wallet", 0) or 0)
 
 async def total_users():
     return await get_db().users.count_documents({})
