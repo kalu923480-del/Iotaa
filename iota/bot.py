@@ -4,14 +4,15 @@
 ║  MongoDB + Dual AI + Full Features      ║
 ╚══════════════════════════════════════════╝
 """
-import logging, asyncio
+import logging, asyncio, os
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, CallbackQueryHandler, PreCheckoutQueryHandler, TypeHandler,
     ChatJoinRequestHandler,
 )
-from config import BOT_TOKEN, OWNER_ID, OWNER_USERNAME
+import aiohttp
+from config import BOT_TOKEN, OWNER_ID, OWNER_USERNAME, WEBAPP_BASE_URL
 from utils.mongo_db import create_indexes, ensure_user
 from utils.ai_provider import load_model_config_db
 
@@ -934,6 +935,10 @@ def main():
         asyncio.create_task(_memory_cleanup_job())
         asyncio.create_task(_premium_expiry_job(application.bot))
         asyncio.create_task(_connect_expiry_job(application.bot))
+        # 🔁 Keep a Render/pass free Web Service awake 24/7 by self-pinging
+        # its own /health route (prevents the 15-min inactivity spin-down
+        # that would otherwise kill the long-poll bot too).
+        asyncio.create_task(_render_keepalive_job())
 
         # 🎲 Ludo Mini App web server — runs in-process, no separate
         # hosting needed. Only warns (doesn't crash the bot) if it fails
@@ -1057,6 +1062,38 @@ async def _connect_expiry_job(bot):
             await expire_due_connections(bot)
         except Exception:
             logger.exception("_connect_expiry_job: unexpected error in loop")
+
+
+async def _render_keepalive_job(interval: int = 300):
+    """
+    Keep a Render (or any PaaS) free-tier Web Service awake 24/7.
+
+    Free-tier web services spin down after ~15 min of NO inbound HTTP —
+    which would also kill the Telegram long-poll bot (it has no incoming
+    HTTP of its own). We ping OUR OWN public URL's /health route every
+    `interval` seconds. That inbound request counts as activity, so the
+    service never idles out and the bot stays live. It's self-sustaining:
+    the bot pings itself → activity → no spin-down → bot keeps pinging.
+
+    Only runs when a public URL is known:
+      • RENDER_EXTERNAL_URL  (auto-injected by Render)
+      • else WEBAPP_BASE_URL  (set in config.py)
+    On a local/dev machine with no URL it cleanly disables itself.
+    """
+    url = os.environ.get("RENDER_EXTERNAL_URL") or WEBAPP_BASE_URL
+    if not url:
+        logger.info("ℹ️ Keep-alive self-ping disabled (no public URL configured).")
+        return
+    url = url.rstrip("/") + "/health"
+    logger.info(f"🔁 Keep-alive self-ping enabled → {url} every {interval}s")
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    logger.debug(f"🔁 Keep-alive ping {url} → HTTP {r.status}")
+        except Exception as e:
+            logger.debug(f"keep-alive ping failed: {e}")
 
 
 if __name__ == "__main__":

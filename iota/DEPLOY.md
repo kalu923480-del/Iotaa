@@ -18,6 +18,10 @@ features ek saath**.
    - `config.py` gitignored hai (secrets + tuning) → Render pe clone mein nahi aata tha → bot import pe crash hota. Isliye **`config_template.py`** (secret-free, env-driven) add kiya + `start.sh` jo `config.py` generate kar deta hai jab wo missing ho.
    - `webapp/ludo_server.py` mein **`/` aur `/health`** route add kiya (Render health-check ke liye).
    - `WEBAPP_PORT` ab `$PORT` se leta hai (Render ka port).
+   - **24/7 keep-alive:** `bot.py` mein `_render_keepalive_job()` har 5 min apne
+     public URL ki `/health` route self-ping karta hai (Render free tier ki
+     15-min inactivity spin-down rokne ke liye). Render khud `RENDER_EXTERNAL_URL`
+     set karta hai; warna `WEBAPP_BASE_URL` use hota hai. Bina URL ke auto-off.
 5. `requirements.txt` complete hai (telegram, motor, pymongo, aiohttp, Pillow).
 
 ---
