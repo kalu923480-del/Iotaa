@@ -155,7 +155,10 @@ def main():
         truth_dare_reply_handler,
         fall_cmd, throw_cmd, kick_cmd, highfive_cmd, poke_cmd,
         tickle_cmd, facepalm_cmd, pie_cmd, trip_cmd, freeze_cmd,
-        zap_cmd, dancewith_cmd
+        zap_cmd, dancewith_cmd,
+        pat_cmd, cuddle_cmd, lick_cmd, bonk_cmd, glare_cmd, feed_cmd,
+        beer_cmd, cry_cmd, blush_cmd, wave_cmd, wink_cmd, dance_cmd,
+        sleep_cmd, simp_cmd, sus_cmd
     )
     from handlers.items        import items_cmd, item_cmd, gift_cmd
     from handlers.village_war  import (
@@ -476,6 +479,11 @@ def main():
         ("highfive",highfive_cmd),("poke",poke_cmd),("tickle",tickle_cmd),
         ("facepalm",facepalm_cmd),("pie",pie_cmd),("trip",trip_cmd),
         ("freeze",freeze_cmd),("zap",zap_cmd),("dancewith",dancewith_cmd),
+        ("pat",pat_cmd),("cuddle",cuddle_cmd),("lick",lick_cmd),
+        ("bonk",bonk_cmd),("glare",glare_cmd),("feed",feed_cmd),
+        ("beer",beer_cmd),("cry",cry_cmd),("blush",blush_cmd),
+        ("wave",wave_cmd),("wink",wink_cmd),("dance",dance_cmd),
+        ("sleep",sleep_cmd),("simp",simp_cmd),("sus",sus_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 

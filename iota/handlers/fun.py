@@ -433,6 +433,146 @@ dancewith_cmd = _make_action_cmd(
 )
 
 
+# ── 🆕 15 more fun commands — action (reply-target) + self-emote + social ──
+# Reuses the same battle-tested factory (_make_action_cmd): reply-required,
+# self-check, bot-immunity, mood-matched GIF, anti-spam guard. So these can
+# never error out — worst case the live GIF search fails and it falls back
+# to plain text.
+
+pat_cmd = _make_action_cmd(
+    "pat",
+    lambda u, t: f"🤚 {mention(u)} patted {mention(t)}'s head! 🥺",
+    ["🤚 khud ko pat? aww cutie 🥺", "🥺 self-pat, precious!"],
+    ["🤚 aww pat back cutie 🥺", "✋ ruk ruk, headpat wapas!"],
+)
+cuddle_cmd = _make_action_cmd(
+    "hug",
+    lambda u, t: f"🫂 {mention(u)} cuddled {mention(t)}! 💞",
+    ["🫂 khud ko cuddle? aww 🥺", "💞 self cuddle, cute!"],
+    ["🫂 cuddle wapas! 💕", "🤗 aww cuddle cutie!"],
+)
+lick_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"👅 {mention(u)} licked {mention(t)}! 😝",
+    ["👅 khud ko lick? weird flex 😂", "😝 self-lick, okay..."],
+    ["👅 eww, lick back! 😜", "😝 naughty! wapas lick!"],
+)
+bonk_cmd = _make_action_cmd(
+    "funny",
+    lambda u, t: f"🔨 {mention(u)} bonked {mention(t)} on the head! 💥",
+    ["🔨 khud ko bonk? bhakk 💀", "💥 self-bonk, okay then"],
+    ["🔨 ow! bonk back 🔨", "💥 wapas bonk to you!"],
+)
+glare_cmd = _make_action_cmd(
+    "angry",
+    lambda u, t: f"😠 {mention(u)} glared at {mention(t)}! 🔥",
+    ["😠 khud pe glare? relatable", "🔥 self-glare, moody!"],
+    ["😠 mujh pe glare? 👀", "🔥 glare wapas, cutie!"],
+)
+feed_cmd = _make_action_cmd(
+    "happy",
+    lambda u, t: f"🍰 {mention(u)} fed {mention(t)} something sweet! 🥰",
+    ["🍰 khud ko feed? aww 🥺", "🥰 self-feeding, cute!"],
+    ["🍰 aww thanks cutie 🥰", "🍪 feed wapas, sweet!"],
+)
+beer_cmd = _make_action_cmd(
+    "happy",
+    lambda u, t: f"🍻 {mention(u)} cheered with {mention(t)}! 🍺",
+    ["🍻 khud se cheers? solo party 🥂", "🍺 self-cheers, respect!"],
+    ["🍻 cheers cutie! 🥂", "🍺 wapas cheers bestie!"],
+)
+
+
+@fun_spam_guard
+async def cry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    msgs = [
+        f"😭 {mention(u)} is crying... 💔",
+        f"😢 {mention(u)} started sobbing 😭",
+        f"💧 {mention(u)} kisi baat pe ro diya 😭",
+    ]
+    await update.effective_message.reply_html(random.choice(msgs))
+
+
+@fun_spam_guard
+async def blush_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    msgs = [
+        f"😊 {mention(u)} is blushing~ 🌸",
+        f"🥺 {mention(u)} turned red 😳",
+        f"🌸 {mention(u)} shy ho gaye/shayi 😊",
+    ]
+    await update.effective_message.reply_html(random.choice(msgs))
+
+
+@fun_spam_guard
+async def wave_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    await update.effective_message.reply_html(f"👋 {mention(u)} waves hello! 👋")
+
+
+@fun_spam_guard
+async def wink_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    await update.effective_message.reply_html(f"😉 {mention(u)} winks at you~ 😏")
+
+
+@fun_spam_guard
+async def dance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    msgs = [
+        f"💃 {mention(u)} is dancing! 🕺✨",
+        f"🕺 {mention(u)} dropped a moves! 💃",
+        f"🎶 {mention(u)} dance party shuru! 💃🕺",
+    ]
+    await update.effective_message.reply_html(random.choice(msgs))
+
+
+@fun_spam_guard
+async def sleep_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    msgs = [
+        f"😴 {mention(u)} fell asleep... 💤",
+        f"💤 {mention(u)} so gaya/shayi 🥱",
+        f"🛌 {mention(u)} is sleeping peacefully 😴",
+    ]
+    await update.effective_message.reply_html(random.choice(msgs))
+
+
+@fun_spam_guard
+async def simp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message; u = update.effective_user
+    if not msg.reply_to_message or not msg.reply_to_message.from_user:
+        await msg.reply_html("😂 Reply to someone to call them a simp!"); return
+    t = msg.reply_to_message.from_user
+    if _is_self(u, t):
+        await msg.reply_html("😂 khud ko simp? self-love fr 💀"); return
+    try:
+        me = await context.bot.get_me()
+        if t.id == me.id:
+            await msg.reply_html("😳 me? aapka simp? sharmaa gayi 💕"); return
+    except Exception:
+        pass
+    await msg.reply_html(f"😂 {mention(u)} kehta/kehti hai {mention(t)} is such a SIMP! 💀👑")
+
+
+@fun_spam_guard
+async def sus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message; u = update.effective_user
+    if not msg.reply_to_message or not msg.reply_to_message.from_user:
+        await msg.reply_html("🛸 Reply to someone to call them SUS!"); return
+    t = msg.reply_to_message.from_user
+    if _is_self(u, t):
+        await msg.reply_html("🚨 khud ko sus? self-report! 💀"); return
+    try:
+        me = await context.bot.get_me()
+        if t.id == me.id:
+            await msg.reply_html("🚨 main sus? never 😎 (emergency meeting!) 🛸"); return
+    except Exception:
+        pass
+    await msg.reply_html(f"🚨 {mention(t)} is SUS! 🛸 Red alert, crewmate! 🔴")
+
+
 # ── Social commands ───────────────────────────────────────────────────────────
 
 async def couples_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
