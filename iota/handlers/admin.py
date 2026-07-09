@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 from utils.mongo_db import (add_warning, get_warnings, remove_last_warning,
                              count_warnings, track_promotion,
-                             get_bot_promotions, remove_promotion,
+                             remove_promotion,
                              get_user_by_username)
 from utils.helpers import ts, mention, parse_duration, is_admin, promote_with_rights
 from utils.safe_html import safe_html
@@ -452,7 +452,8 @@ def _is_target_invalid(uid, context, creator):
     if creator and uid == creator:
         return "❌ You can't promote or demote the group owner!"
     if uid == context.bot.id:
-        return "❌ I can't change my own admin status!"
+        return ("❌ You replied to ME (the bot). Reply to the actual member "
+                "you want to promote/demote instead.")
     return None
 
 
@@ -470,6 +471,10 @@ def _fmt_err(e):
                 "'Add Admins' right too), then I can manage admins.")
     if "owner" in low:
         return "❌ You can't promote or demote the group owner!"
+    if "not_promoted_by_bot" in low or "usernotpromotedbybot" in low:
+        return ("❌ That admin was added by someone else, so I can't manage "
+                "them directly here. Ask a group admin with the 'Add Admins' "
+                "right to let me handle them, or use .demote_all.")
     if "user_admin_invalid" in low:
         return "❌ I can't change that user's admin status."
     if "right_forbidden" in low or "not enough rights" in low:
@@ -558,55 +563,40 @@ async def _demote(update, context, rest):
     except TelegramError as e:
         await msg.reply_html(_fmt_err(e))
 
-async def _demote(update, context, rest):
+async def _demote_all(update, context):
+    """
+    Demote EVERY admin in the group — not just the ones Iota herself
+    promoted. We now read the live admin list from Telegram
+    (get_chat_administrators) instead of the local promotion-tracking
+    collection, so admins added by the group owner or by other admins are
+    demoted too. The only members we never touch are the group creator
+    (Telegram forbids demoting the owner) and Iota herself.
+    """
     msg = update.effective_message; chat = update.effective_chat
-    uid, uname, _ = await _resolve(update, context, rest)
-    if not uid: await msg.reply_html("❌ Specify a user!"); return
-    # ── Bot must be an admin with add-admins right ──
     err = await _bot_perm_error(context, chat, "can_promote_members")
     if err: await msg.reply_html(err); return
-    # ── Can't demote the owner or the bot itself ──
-    creator = await _creator_of(context, chat)
-    bad = _is_target_invalid(uid, context, creator)
-    if bad: await msg.reply_html(bad); return
-    # ── Target must actually be an admin here ──
     try:
-        cm = await context.bot.get_chat_member(chat.id, uid)
-        if cm.status not in ("administrator", "creator"):
-            await msg.reply_html(f"❌ {uname} {sc('is not an admin here!')}"); return
+        admins = await context.bot.get_chat_administrators(chat.id)
     except TelegramError as e:
         await msg.reply_html(_fmt_err(e)); return
     rights = _build_rights()
-    try:
-        await promote_with_rights(context.bot, chat.id, uid, rights)
-        await remove_promotion(uid, chat.id)
-        await msg.reply_html(f"⬇️ {uname} <b>{sc('Demoted')}!</b>")
-    except TelegramError as e:
-        await msg.reply_html(_fmt_err(e))
-
-
-async def _demote_all(update, context):
-    msg = update.effective_message; chat = update.effective_chat
-    err = await _bot_perm_error(context, chat, "can_promote_members")
-    if err: await msg.reply_html(err); return
-    rows = await get_bot_promotions(chat.id)
-    if not rows: await msg.reply_html(f"❓ {sc('No tracked promotions!')}"); return
-    creator = await _creator_of(context, chat)
-    rights = _build_rights()
-    done = 0
-    for r in rows:
-        uid = r["user_id"]
-        if _is_target_invalid(uid, context, creator):
-            continue
+    done = 0; skipped = 0
+    for a in admins:
+        uid = a.user.id
+        if uid == context.bot.id:
+            continue  # never demote Iota herself
+        if a.status == "creator":
+            continue  # the group owner can't be demoted (Telegram limit)
         try:
-            cm = await context.bot.get_chat_member(chat.id, uid)
-            if cm.status not in ("administrator", "creator"):
-                continue
             await promote_with_rights(context.bot, chat.id, uid, rights)
-            await remove_promotion(uid, chat.id); done += 1
+            await remove_promotion(uid, chat.id)
+            done += 1
         except Exception:
-            pass
-    await msg.reply_html(f"✅ {sc('Demoted')} <b>{done}</b> {sc('admins')}.")
+            skipped += 1
+    out = f"✅ {sc('Demoted')} <b>{done}</b> {sc('admins')}."
+    if skipped:
+        out += f"\n⚠️ {skipped} {sc('could not be demoted')} (missing rights)."
+    await msg.reply_html(out)
 
 async def _add_power(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat

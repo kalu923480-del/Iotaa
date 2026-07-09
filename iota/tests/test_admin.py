@@ -98,7 +98,6 @@ class TestAdminPromoteDemote(unittest.IsolatedAsyncioTestCase):
         self.patchers = [
             patch.object(admin, "track_promotion", AsyncMock()),
             patch.object(admin, "remove_promotion", AsyncMock()),
-            patch.object(admin, "get_bot_promotions", AsyncMock(return_value=[])),
             patch.object(admin, "get_user_by_username", AsyncMock(return_value=None)),
         ]
         for p in self.patchers:
@@ -250,6 +249,37 @@ class TestAdminPromoteDemote(unittest.IsolatedAsyncioTestCase):
         ctx.bot.promote_chat_member.assert_called_once()
         args = ctx.bot.promote_chat_member.call_args.args
         self.assertEqual(args[1], OWNER_ID)  # promoted self
+
+
+    # ── 8. .demote_all demotes EVERY admin, including those promoted by
+    #        other admins / the owner — not just Iota's tracked ones. ──────
+    def test_demote_all_includes_others_promotions(self):
+        bot_id = 777
+        # creator (untouched), the bot herself (untouched), an admin
+        # Iota promoted, and an admin promoted by a HUMAN/other admin.
+        def gadm(*a, **k):
+            return [
+                _member("creator", user=_user(999, "Owner")),
+                _member("administrator", user=_user(bot_id, "Iota")),
+                _member("administrator", user=_user(111, "ByIota")),
+                _member("administrator", user=_user(222, "ByOtherAdmin")),
+            ]
+        def gcm(*a, **k):
+            uid = a[1] if len(a) > 1 else k.get("user_id")
+            if uid == bot_id:
+                return _member("administrator", can_promote_members=True)
+            return _member("member")
+        ctx = _ctx(bot_id=bot_id, get_chat_member=gcm,
+                   get_chat_administrators=gadm)
+        msg = _msg(text=".demote_all")
+        up = _update(5, -100, msg)
+        _run(self.admin._demote_all(up, ctx))
+        # Only the two real human admins get demoted (creator + bot skipped).
+        self.assertEqual(ctx.bot.promote_chat_member.call_count, 2)
+        demoted_ids = {c.args[1] for c in ctx.bot.promote_chat_member.call_args_list}
+        self.assertEqual(demoted_ids, {111, 222})
+        out = msg.reply_html.call_args[0][0]
+        self.assertIn("2", out)  # two admins demoted
 
 
 if __name__ == "__main__":
