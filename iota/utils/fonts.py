@@ -28,34 +28,26 @@ _PROTECT_RE = re.compile(
 
 def sc(text: str) -> str:
     """
-    Convert text to Iota-style smallcaps — matching the exact visual
-    style used by other bots (e.g. "𝐁ᴀᴋᴀ" / "Aʟʟ Eᴄᴏɴᴏᴍʏ Cᴏᴍᴍᴀɴᴅꜱ"):
-    the FIRST letter of each word stays a normal, full-size capital,
-    and every letter after it becomes a small-caps glyph. Previously
-    this converted every single letter uniformly (including the first
-    letter of each word), which didn't match that look at all — every
-    word came out looking fully lowercase-small-caps instead of having
-    that bold-capital-then-small-caps punch.
-    Non-letter characters (spaces, punctuation, digits, emoji, HTML)
-    pass through completely untouched.
+    Convert text to Iota-style smallcaps:
+
+      - every LOWERCASE letter (a-z)  -> small-caps unicode glyph (ᴀʙᴄᴅ)
+      - every UPPERCASE letter (A-Z)  -> stays a normal LARGE capital (A B C)
+      - everything else (digits, punctuation, emoji, spaces, HTML,
+        URLs, entities) passes through completely untouched.
+
+    This is the global output style for the whole bot: lowercase renders
+    as small caps, uppercase stays large. Per-character, so word shape
+    and casing are preserved (e.g. "Iota Bot" -> "Iᴏᴛᴀ Bᴏᴛ").
     """
-    words = text.split(" ")
-    out = []
-    for w in words:
-        if not w:
-            out.append(w)
-            continue
-        first, rest = w[0], w[1:]
-        out.append(first + "".join(_SC.get(c.lower(), c) for c in rest))
-    return " ".join(out)
+    return "".join(_SC.get(c, c) for c in text)
 
 def bold_sc(text: str) -> str:
     """Smallcaps wrapped in HTML bold."""
     return f"<b>{sc(text)}</b>"
 
 def header(text: str) -> str:
-    """Bold smallcaps header."""
-    return f"<b>{sc(text.upper())}</b>"
+    """Bold smallcaps header (lowercase -> small caps, uppercase -> large)."""
+    return f"<b>{sc(text)}</b>"
 
 
 def sc_all(text: str) -> str:
