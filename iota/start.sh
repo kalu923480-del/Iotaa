@@ -8,7 +8,7 @@
 # 2. Launch the bot. Its post_init() starts the Ludo Mini App web server on
 #    $PORT (WEBAPP_PORT), so a single Web Service process serves BOTH the
 #    Telegram long-poll bot AND the Ludo Mini App over HTTPS.
-set -euo pipefail
+set -eu
 
 cd "$(dirname "$0")"
 
