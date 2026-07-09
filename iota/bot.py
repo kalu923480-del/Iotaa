@@ -86,7 +86,6 @@ def _install_smallcaps_output():
 
 
 def main():
-    _install_smallcaps_output()
     app = Application.builder().token(BOT_TOKEN).build()
 
     # ── Imports ───────────────────────────────────────────────────────

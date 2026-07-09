@@ -28,18 +28,15 @@ _PROTECT_RE = re.compile(
 
 def sc(text: str) -> str:
     """
-    Convert text to Iota-style smallcaps:
+    Small-caps converter.
 
-      - every LOWERCASE letter (a-z)  -> small-caps unicode glyph (ᴀʙᴄᴅ)
-      - every UPPERCASE letter (A-Z)  -> stays a normal LARGE capital (A B C)
-      - everything else (digits, punctuation, emoji, spaces, HTML,
-        URLs, entities) passes through completely untouched.
-
-    This is the global output style for the whole bot: lowercase renders
-    as small caps, uppercase stays large. Per-character, so word shape
-    and casing are preserved (e.g. "Iota Bot" -> "Iᴏᴛᴀ Bᴏᴛ").
+    Currently a PASS-THROUGH: small-caps styling is turned OFF so all bot
+    responses, /command references and other user-facing text render as
+    normal (plain) text. The _SC mapping is retained so this can be
+    re-enabled later if desired — but for now callers get their text back
+    unchanged, which keeps every output normal.
     """
-    return "".join(_SC.get(c, c) for c in text)
+    return text
 
 def bold_sc(text: str) -> str:
     """Smallcaps wrapped in HTML bold."""
