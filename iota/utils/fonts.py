@@ -26,17 +26,62 @@ _PROTECT_RE = re.compile(
     r'|&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);)'
 )
 
+# Tokens that must NEVER be small-caps styled — they are literal and
+# user/code-facing:
+#   - Telegram commands:  /start, /addapikey, /ludo ...
+#   - Versioned AI model names: gpt-4o, llama-3.1, claude-3, gemini-1.5 ...
+#   - URLs: https://..., t.me/..., tg://... (so links stay clickable)
+# (a leading ":" is excluded so https:// URLs are never touched)
+_PROTECT_OUT = re.compile(
+    r"(?<!:)"
+    r"(/[A-Za-z_][A-Za-z0-9_]*"
+    r"|https?://\S+"
+    r"|t\.me/\S+"
+    r"|tg://\S+"
+    r"|gpt[-0-9][\w.\-]*"
+    r"|llama[-0-9][\w.\-]*"
+    r"|claude[-0-9][\w.\-]*"
+    r"|gemini[-0-9][\w.\-]*"
+    r"|mixtral[-0-9][\w.\-]*"
+    r"|mistral[-0-9][\w.\-]*"
+    r"|qwen[-0-9][\w.\-]*"
+    r"|deepseek[-0-9][\w.\-]*"
+    r"|gemma[-0-9][\w.\-]*"
+    r"|phi[-0-9][\w.\-]*"
+    r"|grok[-0-9][\w.\-]*"
+    r"|command[-0-9][\w.\-]*)",
+    re.IGNORECASE,
+)
+
+
 def sc(text: str) -> str:
     """
-    Small-caps converter.
+    Small-caps converter for Iota's BRANDED OUTPUT only (headers, labels,
+    status badges, menus, game boards — the spots the handlers already
+    call this at). NOT for whole replies, /command names, or model names.
 
-    Currently a PASS-THROUGH: small-caps styling is turned OFF so all bot
-    responses, /command references and other user-facing text render as
-    normal (plain) text. The _SC mapping is retained so this can be
-    re-enabled later if desired — but for now callers get their text back
-    unchanged, which keeps every output normal.
+      - every LOWERCASE letter (a-z) -> small-caps unicode (ᴀʙᴄᴅ)
+      - every UPPERCASE letter (A-Z) -> stays a normal LARGE capital (A B C)
+      - /commands and versioned model names are LEFT NORMAL on purpose
+      - everything else (digits, punctuation, emoji, spaces, HTML, URLs,
+        entities) passes through untouched.
+
+    Per-character, so word shape/casing is preserved (e.g. "Balance" ->
+    "ʙᴀʟᴀɴᴄᴇ", but "Usage: /addapikey" -> "ᴜꜱᴀɢᴇ: /addapikey").
+    Idempotent: small-caps glyphs pass through unchanged.
     """
-    return text
+    if not isinstance(text, str):
+        return text
+    parts = _PROTECT_OUT.split(text)
+    out = []
+    for part in parts:
+        if not part:
+            continue
+        if _PROTECT_OUT.fullmatch(part):
+            out.append(part)          # command / model name — keep literal
+        else:
+            out.append("".join(_SC.get(c, c) for c in part))
+    return "".join(out)
 
 def bold_sc(text: str) -> str:
     """Smallcaps wrapped in HTML bold."""
