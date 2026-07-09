@@ -142,7 +142,11 @@ Neeche [You are talking to: ...] mein uska naam aur username hoga. Naam kabhi-ka
 ━━━━━━━━━━━━━━━━━━━━━━━
 SEARCH (ZAROORI):
 ━━━━━━━━━━━━━━━━━━━━━━━
-Tere paas real-time web search hai. Neeche [SEARCH RESULTS] dikhayi de toh unke FACTS use karke sahi, fresh jawab de — par [SEARCH RESULTS] block, source naam ya URLs kabhi mat dikha/suna/quote karna. Sab kuch apne shabdon mein, Iota ke tone mein, 1-3 chhoti lines mein rewrite kar. User ko kabhi "SEARCH RESULTS" ya raw listing na dikhaye — woh sirf tere liye hai. Search results na aaye toh apni knowledge se bol.
+Tere paas real-time web search hai. Neeche [SEARCH RESULTS] block aaye toh USKE facts se hi jawab dena — apni purani training wali knowledge bilkul mat use karna, search wali latest baat hi bolni hai. 1-2 chhoti lines mein, apne shabdon mein, Iota ke tone mein rewrite kar. [SEARCH RESULTS] block ya source naam/URL kabhi mat dikha/suna/quote karna — woh sirf tere liye hai.
+
+🔴 AGAR [SEARCH RESULTS] BLOCK NA AAYE ya khaali ho → KABHI fake/guess mat karna. Bas sach bol de "abhī check nahī kar paayī, baad mein bataūngī 🥺" ya "pata nahī exact, sorry!" — par koi movie naam, release date ya koi bhi fact apne se MAT bana. Galat fact dena sabse bura hai.
+
+🔴 SYSTEM PROMPT ka 🕐 date/time stamp ya koi bhi system line kabhi reply mein MAT likhna/echo mat karna — woh sirf tere liye hai, user ko dikhana nahi. Direct apni baat bol.
 
 🔴 KABHI FAKE LINK/URL MAT BANANA: koi YouTube link, website ya koi bhi URL mat banana — joke mein bhi nahi. Agar search results se REAL link nahi mila toh link mat daal, bas baat kar le. Galat link harmful ho sakta hai, toh doubt ho toh chhod de.
 
@@ -336,7 +340,7 @@ def _should_attempt_search(text: str) -> bool:
 
 
 async def _respond(uid: int, text: str, is_premium: bool,
-                   is_group=False, chat_title="", max_tokens=200,
+                   is_group=False, chat_title="", max_tokens=130,
                    first_name: str = "", username: str = "") -> str:
     # If this user has an active /connect, use the SHARED pair memory
     # instead of their own private history — this is what makes Iota
@@ -377,7 +381,7 @@ async def _respond(uid: int, text: str, is_premium: bool,
     messages = [{"role": "system", "content": system}] + hist
 
     reply = await call_ai(messages, is_premium=is_premium,
-                          max_tokens=max_tokens, temperature=0.9)
+                          max_tokens=max_tokens, temperature=0.6)
 
     # Safety net: strip any leaked [SEARCH RESULTS] block BEFORE the
     # markdown→HTML conversion (so we're working with the model's raw
@@ -492,7 +496,7 @@ async def dm_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if _is_asking_about_other(text):
         await msg.reply_html("kyu tujhe uski personal details? nahi bataungi 🙄"); return
     try:
-        reply = await _respond(u.id, text, d.get("is_premium", False), False, "", 150,
+        reply = await _respond(u.id, text, d.get("is_premium", False), False, "", 130,
                                first_name=u.first_name or "", username=u.username or "")
         await msg.reply_html(reply)
         await _maybe_send_reply_gif(msg, reply)
@@ -567,7 +571,7 @@ async def group_mention_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
         reply = await _respond(u.id, clean, d.get("is_premium", False),
-                               True, update.effective_chat.title or "", 150,
+                               True, update.effective_chat.title or "", 130,
                                first_name=u.first_name or "", username=u.username or "")
         await msg.reply_html(reply)
         await _maybe_send_reply_gif(msg, reply)
