@@ -71,7 +71,7 @@ Ye **zaruri** hain (bina inke bot start hi nahi hoga):
 |-----|-------|
 | `BOT_TOKEN` | `@BotFather` se mila bot token |
 | `OWNER_ID` | tera Telegram user ID (e.g. `6998484205`) |
-| `OWNER_USERNAME` | `@Boobies_00` |
+| `OWNER_USERNAME` | `@im_ntg` |
 | `MONGO_URI` | MongoDB Atlas connection string (pura) |
 | `WEBAPP_BASE_URL` | `https://<your-service>.onrender.com` |
 | `GROQ_API_KEYS` | comma-separated Groq keys |
