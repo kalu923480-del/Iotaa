@@ -227,6 +227,30 @@ class TestAdminPromoteDemote(unittest.IsolatedAsyncioTestCase):
         title = ctx.bot.set_chat_administrator_custom_title.call_args[0][2]
         self.assertEqual(title, "Senior Admin")  # level 2 title
 
+    # ── 7. Bot OWNER with no target promotes themselves (even if a normal
+    #        member of the group) when the bot has the Add-Admins right. ──
+    def test_owner_self_promote_no_target(self):
+        from config import OWNER_ID
+        def gcm(*a, **k):
+            uid = a[1] if len(a) > 1 else k.get("user_id")
+            if uid == 777:
+                return _member("administrator", can_promote_members=True,
+                               **{f"can_{r}": True for r in
+                                  ["manage_chat", "delete_messages",
+                                   "manage_video_chats", "restrict_members",
+                                   "change_info", "invite_users", "pin_messages",
+                                   "post_messages", "edit_messages",
+                                   "post_stories", "edit_stories",
+                                   "delete_stories", "manage_topics"]})
+            return _member("member")
+        ctx = _ctx(bot_id=777, get_chat_member=gcm)
+        msg = _msg(text=".promote")
+        up = _update(OWNER_ID, -100, msg)  # owner is a normal member here
+        _run(self.admin._promote(up, ctx, ""))
+        ctx.bot.promote_chat_member.assert_called_once()
+        args = ctx.bot.promote_chat_member.call_args.args
+        self.assertEqual(args[1], OWNER_ID)  # promoted self
+
 
 if __name__ == "__main__":
     unittest.main()

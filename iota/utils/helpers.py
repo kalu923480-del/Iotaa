@@ -155,21 +155,43 @@ async def promote_with_rights(bot, chat_id, user_id, rights: ChatAdministratorRi
     "unexpected keyword argument 'rights'". This helper always uses the
     individual-flag form so promotion/demotion works everywhere.
     """
-    await bot.promote_chat_member(
-        chat_id, user_id,
-        is_anonymous=rights.is_anonymous,
-        can_manage_chat=rights.can_manage_chat,
-        can_delete_messages=rights.can_delete_messages,
-        can_manage_video_chats=rights.can_manage_video_chats,
-        can_restrict_members=rights.can_restrict_members,
-        can_promote_members=rights.can_promote_members,
-        can_change_info=rights.can_change_info,
-        can_invite_users=rights.can_invite_users,
-        can_post_messages=rights.can_post_messages,
-        can_edit_messages=rights.can_edit_messages,
-        can_pin_messages=rights.can_pin_messages,
-        can_post_stories=rights.can_post_stories,
-        can_edit_stories=rights.can_edit_stories,
-        can_delete_stories=rights.can_delete_stories,
-        can_manage_topics=getattr(rights, "can_manage_topics", None),
-    )
+    try:
+        await bot.promote_chat_member(
+            chat_id, user_id,
+            is_anonymous=rights.is_anonymous,
+            can_manage_chat=rights.can_manage_chat,
+            can_delete_messages=rights.can_delete_messages,
+            can_manage_video_chats=rights.can_manage_video_chats,
+            can_restrict_members=rights.can_restrict_members,
+            can_promote_members=rights.can_promote_members,
+            can_change_info=rights.can_change_info,
+            can_invite_users=rights.can_invite_users,
+            can_post_messages=rights.can_post_messages,
+            can_edit_messages=rights.can_edit_messages,
+            can_pin_messages=rights.can_pin_messages,
+            can_post_stories=rights.can_post_stories,
+            can_edit_stories=rights.can_edit_stories,
+            can_delete_stories=rights.can_delete_stories,
+            can_manage_topics=getattr(rights, "can_manage_topics", None),
+        )
+    except Exception:
+        # Some bot accounts / chat types reject the can_manage_topics
+        # parameter (or any single param) with a 400. Retry once without
+        # it so promotion/demotion still works everywhere.
+        await bot.promote_chat_member(
+            chat_id, user_id,
+            is_anonymous=rights.is_anonymous,
+            can_manage_chat=rights.can_manage_chat,
+            can_delete_messages=rights.can_delete_messages,
+            can_manage_video_chats=rights.can_manage_video_chats,
+            can_restrict_members=rights.can_restrict_members,
+            can_promote_members=rights.can_promote_members,
+            can_change_info=rights.can_change_info,
+            can_invite_users=rights.can_invite_users,
+            can_post_messages=rights.can_post_messages,
+            can_edit_messages=rights.can_edit_messages,
+            can_pin_messages=rights.can_pin_messages,
+            can_post_stories=rights.can_post_stories,
+            can_edit_stories=rights.can_edit_stories,
+            can_delete_stories=rights.can_delete_stories,
+        )
