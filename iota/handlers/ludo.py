@@ -296,73 +296,113 @@ def _lobby_text(game: dict) -> str:
 
 @games_gate
 async def ludo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u    = update.effective_user
-    chat = update.effective_chat
+    # 🔴 Top-level guard: ANY failure below (DB hiccup, dead GIF link,
+    # WebApp domain not configured in @BotFather, network blip, etc.)
+    # used to leak to the global error handler and show the user a cold
+    # "Kuch gadbad ho gayi!" with no clue what broke. Now /ludo ALWAYS
+    # replies with something sensible, and any deducted bet is refunded
+    # so a mid-command failure never silently eats the user's coins.
+    try:
+        u    = update.effective_user
+        chat = update.effective_chat
 
-    if chat.type == "private":
-        await update.message.reply_html(
-            "🎲 <b>Ludo sirf group mein khel sakte hain!</b>\n"
-            "Apne group mein add karo aur /ludo use karo."
-        ); return
-
-    await ensure_user(u.id, u.username or "", u.full_name)
-
-    # Parse bet
-    bet = 0
-    if context.args:
-        try:
-            bet = max(0, int(context.args[0]))
-        except ValueError:
-            await update.message.reply_html("❌ Usage: /ludo [bet_amount]"); return
-
-    if bet > 0:
-        d = await get_user(u.id)
-        if d["balance"] < bet:
+        if chat.type == "private":
             await update.message.reply_html(
-                f"❌ Tumhare paas enough coins nahi!\n"
-                f"💰 Balance: {fmt(d['balance'])} | Bet: {fmt(bet)}"
+                "🎲 <b>Ludo sirf group mein khel sakte hain!</b>\n"
+                "Apne group mein add karo aur /ludo use karo."
             ); return
-        await deduct_balance(u.id, bet)
 
-    game = _new_game(chat.id, u.id, u.first_name, bet)
-    gid  = game["id"]
-    _ludo_games[gid] = game
+        await ensure_user(u.id, u.username or "", u.full_name)
 
-    from config import WEBAPP_BASE_URL
-    if WEBAPP_BASE_URL:
-        # 🎮 Full visual Mini App experience is configured — offer it as
-        # the primary way to play, alongside the classic chat buttons.
-        from telegram import WebAppInfo
-        webapp_url = f"{WEBAPP_BASE_URL}/ludo?game_id={gid}&chat_id={chat.id}&bet={bet}"
-        spectate_url = f"{WEBAPP_BASE_URL}/ludo?game_id={gid}&chat_id={chat.id}&mode=spectate"
-        caption = (
-            f"🎲 <b>{sc('Iota Ludo — Mini App')}</b>\n\n"
-            "Play with a real animated board, live dice, and in-lobby chat "
-            "— right inside Telegram!\n\n"
-            f"💰 Bet: {fmt(bet)} per player\n"
-            f"👤 Host: {mention(u)}\n\n"
-            "Tap <b>Play Ludo</b> to join, or <b>Watch</b> to spectate without playing."
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎮 Play Ludo", web_app=WebAppInfo(url=webapp_url))],
-            [InlineKeyboardButton("👀 Watch", web_app=WebAppInfo(url=spectate_url))],
-            [InlineKeyboardButton("💬 Classic chat mode", callback_data=f"ludo_classic_{gid}")],
-        ])
+        # Parse bet
+        bet = 0
+        if context.args:
+            try:
+                bet = max(0, int(context.args[0]))
+            except ValueError:
+                await update.message.reply_html("❌ Usage: /ludo [bet_amount]"); return
+
+        if bet > 0:
+            d = await get_user(u.id)
+            if d["balance"] < bet:
+                await update.message.reply_html(
+                    f"❌ Tumhare paas enough coins nahi!\n"
+                    f"💰 Balance: {fmt(d['balance'])} | Bet: {fmt(bet)}"
+                ); return
+            await deduct_balance(u.id, bet)
+
+        game = _new_game(chat.id, u.id, u.first_name, bet)
+        gid  = game["id"]
+        _ludo_games[gid] = game
+
+        # If anything while announcing the game blows up, refund the bet
+        # so the user isn't charged for a game they couldn't even start.
         try:
-            await update.message.reply_animation(
-                animation=LUDO_GIF, caption=caption, parse_mode="HTML", reply_markup=kb
+            from config import WEBAPP_BASE_URL
+            if WEBAPP_BASE_URL:
+                # 🎮 Full visual Mini App experience is configured — offer it
+                # as the primary way to play, alongside the classic buttons.
+                from telegram import WebAppInfo
+                webapp_url = f"{WEBAPP_BASE_URL}/ludo?game_id={gid}&chat_id={chat.id}&bet={bet}"
+                spectate_url = f"{WEBAPP_BASE_URL}/ludo?game_id={gid}&chat_id={chat.id}&mode=spectate"
+                caption = (
+                    f"🎲 <b>{sc('Iota Ludo — Mini App')}</b>\n\n"
+                    "Play with a real animated board, live dice, and in-lobby chat "
+                    "— right inside Telegram!\n\n"
+                    f"💰 Bet: {fmt(bet)} per player\n"
+                    f"👤 Host: {mention(u)}\n\n"
+                    "Tap <b>Play Ludo</b> to join, or <b>Watch</b> to spectate without playing."
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎮 Play Ludo", web_app=WebAppInfo(url=webapp_url))],
+                    [InlineKeyboardButton("👀 Watch", web_app=WebAppInfo(url=spectate_url))],
+                    [InlineKeyboardButton("💬 Classic chat mode", callback_data=f"ludo_classic_{gid}")],
+                ])
+                try:
+                    await update.message.reply_animation(
+                        animation=LUDO_GIF, caption=caption, parse_mode="HTML", reply_markup=kb
+                    )
+                except Exception as e:
+                    # WebApp buttons get rejected when the domain isn't
+                    # configured in @BotFather. Re-sending the SAME kb would
+                    # fail again — fall back to the classic chat lobby so the
+                    # command still responds.
+                    logger.debug(f"ludo_cmd WebApp send failed ({e}); classic lobby")
+                    await _announce_classic(update, game, gid)
+            else:
+                # No Mini App URL configured — classic in-chat game.
+                await _announce_classic(update, game, gid)
+        except Exception as announce_err:
+            logger.warning(f"ludo_cmd announce failed, refunding bet: {announce_err}")
+            if bet > 0:
+                try:
+                    await add_balance(u.id, bet)
+                except Exception as refund_err:
+                    logger.warning(f"ludo_cmd bet refund failed: {refund_err}")
+                _ludo_games.pop(gid, None)
+            await update.message.reply_html(
+                "🎲 Ludo shuru nahi ho paya 😣 thodi der baad try karo!"
+            )
+    except Exception as e:
+        logger.warning(f"ludo_cmd failed: {e}")
+        try:
+            await update.effective_message.reply_html(
+                "🎲 Ludo shuru nahi ho paya 😣 thodi der baad try karo!"
             )
         except Exception:
-            await update.message.reply_html(caption, reply_markup=kb)
-        return
+            pass
 
-    # No Mini App URL configured yet — fall back to the classic in-chat game.
+
+async def _announce_classic(update: Update, game: dict, gid: str):
+    """Sends the lobby message as an animation (GIF) when possible, and
+    cleanly falls back to a plain text message if the GIF URL is dead or
+    Telegram rejects it — never raises, never double-sends a broken kb."""
     try:
         await update.message.reply_animation(
             animation=LUDO_GIF,
             caption=_lobby_text(game),
             parse_mode="HTML",
-            reply_markup=_lobby_kb(gid)
+            reply_markup=_lobby_kb(gid),
         )
     except Exception:
         await update.message.reply_html(_lobby_text(game), reply_markup=_lobby_kb(gid))

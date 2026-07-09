@@ -162,6 +162,10 @@ async def _warn(update, context, rest):
     count = await count_warnings(uid, chat.id)
     limit = await get_warn_limit(chat.id)
     if count >= limit:
+        err = await _bot_perm_error(context, chat, "can_restrict_members")
+        if err: await msg.reply_html(err); return
+        bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+        if bad: await msg.reply_html(bad); return
         try:
             await context.bot.ban_chat_member(chat.id, uid)
             await get_db().warnings.delete_many({"user_id": uid, "chat_id": chat.id})
@@ -200,6 +204,8 @@ async def _mute(update, context, rest, delete=False):
         except Exception: pass
     uid, uname, extra = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
     dur_str = extra[0] if extra else ""
     secs = parse_duration(dur_str)
     perms = ChatPermissions(can_send_messages=False)
@@ -220,6 +226,8 @@ async def _imute(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
     uid, uname, extra = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
     dur_str = extra[0] if extra else ""
     secs = parse_duration(dur_str)
     perms = ChatPermissions(
@@ -250,6 +258,8 @@ async def _unmute(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
     uid, uname, _ = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
     perms = ChatPermissions(
         can_send_messages=True,
         can_send_photos=True, can_send_videos=True, can_send_audios=True,
@@ -270,6 +280,10 @@ async def _ban(update, context, rest, delete=False):
         except Exception: pass
     uid, uname, extra = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
+    bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+    if bad: await msg.reply_html(bad); return
     reason = " ".join(extra) or "No reason"
     try:
         await context.bot.ban_chat_member(chat.id, uid)
@@ -281,6 +295,8 @@ async def _unban(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
     uid, uname, _ = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
     try:
         await context.bot.unban_chat_member(chat.id, uid, only_if_banned=True)
         await msg.reply_html(f"✅ {uname} <b>{sc('Unbanned')}!</b>")
@@ -291,6 +307,10 @@ async def _kick(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
     uid, uname, _ = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
+    bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+    if bad: await msg.reply_html(bad); return
     try:
         await context.bot.ban_chat_member(chat.id, uid)
         await context.bot.unban_chat_member(chat.id, uid)
@@ -319,6 +339,7 @@ def _build_rights(**overrides) -> ChatAdministratorRights:
         can_promote_members=False, can_change_info=False, can_invite_users=False,
         can_post_messages=False, can_edit_messages=False, can_pin_messages=False,
         can_post_stories=False, can_edit_stories=False, can_delete_stories=False,
+        can_manage_topics=False,
     )
     base.update(overrides)
     return ChatAdministratorRights(**base)
@@ -365,12 +386,89 @@ def _cap_rights(rights, my_rights):
     return ChatAdministratorRights(**kw), dropped
 
 
+async def _bot_member(context, chat):
+    """Return the bot's own ChatMember in this chat, or None on failure."""
+    try:
+        return await context.bot.get_chat_member(chat.id, context.bot.id)
+    except Exception:
+        return None
+
+
+async def _creator_of(context, chat):
+    """Return the user id of the chat creator (owner), or None if unknown."""
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+    except Exception:
+        return None
+    for a in admins:
+        if a.status == "creator":
+            return a.user.id
+    return None
+
+
+async def _bot_perm_error(context, chat, *needed):
+    """
+    Return a friendly error string if the bot itself cannot perform an
+    admin action in this chat, else None.
+
+    This is what prevents the raw Telegram failures behind the reported
+    bugs:
+      - "Chat_admin_required"  -> the bot isn't an admin at all
+      - "Right_forbidden"      -> bot is admin but lacks the needed right
+    We surface a clear message instead of letting Telegram error out.
+    """
+    me = await _bot_member(context, chat)
+    if me is None or me.status not in ("administrator", "creator"):
+        return "❌ I need to be an admin in this chat to use that command."
+    names = {
+        "can_promote_members":   "'Add New Admins'",
+        "can_change_info":       "'Change Info'",
+        "can_pin_messages":      "'Pin Messages'",
+        "can_delete_messages":   "'Delete Messages'",
+        "can_restrict_members":  "'Restrict Users'",
+        "can_invite_users":      "'Invite Users'",
+        "can_manage_chat":       "'Manage Chat'",
+        "can_manage_video_chats":"'Manage Video Chats'",
+    }
+    for right in needed:
+        if not getattr(me, right, False):
+            return (f"❌ I'm missing the {names.get(right, right)} "
+                    f"permission needed for that.")
+    return None
+
+
+def _is_target_invalid(uid, context, creator):
+    """Return a friendly error string if uid is a forbidden target
+    (the group owner or the bot itself), else None."""
+    if creator and uid == creator:
+        return "❌ You can't promote or demote the group owner!"
+    if uid == context.bot.id:
+        return "❌ I can't change my own admin status!"
+    return None
+
+
 async def _promote(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
-    uid, uname, extra = await _resolve(update, context, rest)
+    # ── Parse level (1/2/3) out of the args so ".promote 1" (as a reply)
+    #    sets level 1 instead of being misread as target user id 1. ──
+    tokens = rest.split()
+    level = "1"
+    for i, t in enumerate(tokens):
+        if t in ("1", "2", "3"):
+            level = t
+            tokens.pop(i)
+            break
+    uid, uname, _ = await _resolve(update, context, " ".join(tokens))
     if not uid: await msg.reply_html("❌ Specify a user!"); return
-    level = extra[0] if extra else "1"
-    info  = PROMOTE_TITLES.get(level, PROMOTE_TITLES["1"])
+    # ── Bot must be an admin with add-admins right ──
+    err = await _bot_perm_error(context, chat, "can_promote_members")
+    if err: await msg.reply_html(err); return
+    # ── Can't promote the owner or the bot itself ──
+    creator = await _creator_of(context, chat)
+    bad = _is_target_invalid(uid, context, creator)
+    if bad: await msg.reply_html(bad); return
+    # ── Target must not already be the owner; skip if already admin ──
+    info = PROMOTE_TITLES.get(level, PROMOTE_TITLES["1"])
     medal, title_name, rights_kw = info
     try:
         my = await _bot_rights(context, chat)
@@ -387,12 +485,25 @@ async def _promote(update, context, rest):
         await msg.reply_html(out)
     except TelegramError as e:
         await msg.reply_html(f"❌ {safe_html(e)}")
-        await msg.reply_html(f"❌ {safe_html(e)}")
 
 async def _demote(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
     uid, uname, _ = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    # ── Bot must be an admin with add-admins right ──
+    err = await _bot_perm_error(context, chat, "can_promote_members")
+    if err: await msg.reply_html(err); return
+    # ── Can't demote the owner or the bot itself ──
+    creator = await _creator_of(context, chat)
+    bad = _is_target_invalid(uid, context, creator)
+    if bad: await msg.reply_html(bad); return
+    # ── Target must actually be an admin here ──
+    try:
+        cm = await context.bot.get_chat_member(chat.id, uid)
+        if cm.status not in ("administrator", "creator"):
+            await msg.reply_html(f"❌ {uname} {sc('is not an admin here!')}"); return
+    except TelegramError as e:
+        await msg.reply_html(f"❌ {safe_html(e)}"); return
     rights = _build_rights()
     try:
         await promote_with_rights(context.bot, chat.id, uid, rights)
@@ -401,17 +512,28 @@ async def _demote(update, context, rest):
     except TelegramError as e:
         await msg.reply_html(f"❌ {safe_html(e)}")
 
+
 async def _demote_all(update, context):
     msg = update.effective_message; chat = update.effective_chat
+    err = await _bot_perm_error(context, chat, "can_promote_members")
+    if err: await msg.reply_html(err); return
     rows = await get_bot_promotions(chat.id)
     if not rows: await msg.reply_html(f"❓ {sc('No tracked promotions!')}"); return
+    creator = await _creator_of(context, chat)
     rights = _build_rights()
     done = 0
     for r in rows:
+        uid = r["user_id"]
+        if _is_target_invalid(uid, context, creator):
+            continue
         try:
-            await promote_with_rights(context.bot, chat.id, r["user_id"], rights)
-            await remove_promotion(r["user_id"], chat.id); done += 1
-        except Exception: pass
+            cm = await context.bot.get_chat_member(chat.id, uid)
+            if cm.status not in ("administrator", "creator"):
+                continue
+            await promote_with_rights(context.bot, chat.id, uid, rights)
+            await remove_promotion(uid, chat.id); done += 1
+        except Exception:
+            pass
     await msg.reply_html(f"✅ {sc('Demoted')} <b>{done}</b> {sc('admins')}.")
 
 async def _add_power(update, context, rest):
@@ -421,6 +543,10 @@ async def _add_power(update, context, rest):
         await msg.reply_html(f"❌ {sc('Usage')}: .add [user] &lt;power&gt;\n{sc('Powers')}: {' | '.join(POWER_MAP.keys())}"); return
     perm = POWER_MAP.get(extra[0].lower())
     if not perm: await msg.reply_html(f"❌ {sc('Unknown power!')}"); return
+    err = await _bot_perm_error(context, chat, "can_promote_members")
+    if err: await msg.reply_html(err); return
+    bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+    if bad: await msg.reply_html(bad); return
     try:
         cm = await context.bot.get_chat_member(chat.id, uid)
         my = await _bot_rights(context, chat)
@@ -451,6 +577,10 @@ async def _remove_power(update, context, rest):
         await msg.reply_html(f"❌ {sc('Usage')}: .remove [user] &lt;power&gt;"); return
     perm = POWER_MAP.get(extra[0].lower())
     if not perm: await msg.reply_html(f"❌ {sc('Unknown power!')}"); return
+    err = await _bot_perm_error(context, chat, "can_promote_members")
+    if err: await msg.reply_html(err); return
+    bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+    if bad: await msg.reply_html(bad); return
     try:
         cm = await context.bot.get_chat_member(chat.id, uid)
         my = await _bot_rights(context, chat)
@@ -474,35 +604,15 @@ async def _remove_power(update, context, rest):
     except TelegramError as e:
         await msg.reply_html(f"❌ {safe_html(e)}")
 
-async def _remove_power(update, context, rest):
-    msg = update.effective_message; chat = update.effective_chat
-    uid, uname, extra = await _resolve(update, context, rest)
-    if not uid or not extra:
-        await msg.reply_html(f"❌ {sc('Usage')}: .remove [user] &lt;power&gt;"); return
-    perm = POWER_MAP.get(extra[0].lower())
-    if not perm: await msg.reply_html(f"❌ {sc('Unknown power!')}"); return
-    try:
-        cm = await context.bot.get_chat_member(chat.id, uid)
-        rights = _build_rights(
-            can_manage_chat=True,
-            can_delete_messages=bool(cm.can_delete_messages),
-            can_restrict_members=bool(cm.can_restrict_members),
-            can_invite_users=bool(cm.can_invite_users),
-            can_pin_messages=bool(cm.can_pin_messages),
-            can_change_info=bool(cm.can_change_info),
-            can_promote_members=bool(cm.can_promote_members),
-            can_manage_video_chats=bool(cm.can_manage_video_chats),
-            **{perm: False},
-        )
-        await promote_with_rights(context.bot, chat.id, uid, rights)
-        await msg.reply_html(f"✅ {sc('Removed')} <b>{extra[0]}</b> {sc('from')} {uname}!")
-    except TelegramError as e:
-        await msg.reply_html(f"❌ {safe_html(e)}")
-
 async def _title(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
     uid, uname, extra = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
+    # Setting an admin title needs the bot to have the add-admins right.
+    err = await _bot_perm_error(context, chat, "can_promote_members")
+    if err: await msg.reply_html(err); return
+    bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+    if bad: await msg.reply_html(bad); return
     title = " ".join(extra)
     try:
         await context.bot.set_chat_administrator_custom_title(chat.id, uid, title)
@@ -511,9 +621,11 @@ async def _title(update, context, rest):
         await msg.reply_html(f"❌ {safe_html(e)}")
 
 async def _pin(update, context):
-    msg = update.effective_message
+    msg = update.effective_message; chat = update.effective_chat
     if not msg.reply_to_message:
         await msg.reply_html(f"❌ {sc('Reply to a message!')}"); return
+    err = await _bot_perm_error(context, chat, "can_pin_messages")
+    if err: await msg.reply_html(err); return
     try:
         await msg.reply_to_message.pin()
         await msg.reply_html(f"📌 {sc('Pinned!')}") 
@@ -521,13 +633,15 @@ async def _pin(update, context):
         await msg.reply_html(f"❌ {safe_html(e)}")
 
 async def _unpin(update, context):
-    msg = update.effective_message
+    msg = update.effective_message; chat = update.effective_chat
+    err = await _bot_perm_error(context, chat, "can_pin_messages")
+    if err: await msg.reply_html(err); return
     try:
         if msg.reply_to_message:
             await context.bot.unpin_chat_message(
-                update.effective_chat.id, msg.reply_to_message.message_id)
+                chat.id, msg.reply_to_message.message_id)
         else:
-            await context.bot.unpin_chat_message(update.effective_chat.id)
+            await context.bot.unpin_chat_message(chat.id)
         await msg.reply_html(f"📌 {sc('Unpinned!')}")
     except TelegramError as e:
         await msg.reply_html(f"❌ {safe_html(e)}")
@@ -706,6 +820,8 @@ async def _tmute(update, context, rest):
     uid, uname, extra = await _resolve(update, context, rest)
     if not uid:
         await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
     dur_str = extra[0] if extra else "1h"
     try:
         dur = parse_duration(dur_str)
@@ -732,6 +848,10 @@ async def _tban(update, context, rest):
     uid, uname, extra = await _resolve(update, context, rest)
     if not uid:
         await msg.reply_html("❌ Specify a user!"); return
+    err = await _bot_perm_error(context, chat, "can_restrict_members")
+    if err: await msg.reply_html(err); return
+    bad = _is_target_invalid(uid, context, await _creator_of(context, chat))
+    if bad: await msg.reply_html(bad); return
     dur_str = extra[0] if extra else "1h"
     try:
         dur = parse_duration(dur_str)
