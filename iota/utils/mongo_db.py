@@ -119,6 +119,12 @@ async def update_user(uid, **kw):
 async def add_balance(uid, amt):
     await get_db().users.update_one({"_id":uid},{"$inc":{"balance":amt}})
 
+async def add_gems(uid, amt):
+    await get_db().users.update_one({"_id":uid},{"$inc":{"gems":amt}})
+
+async def deduct_gems(uid, amt):
+    await get_db().users.update_one({"_id":uid},{"$inc":{"gems":-abs(amt)}})
+
 async def get_top_rich(n=10):
     pipeline = [
         {"$match": {"is_banned": {"$ne": True}}},

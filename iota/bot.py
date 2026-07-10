@@ -125,6 +125,8 @@ def main():
     )
     from handlers.slots_game import slots_cmd
     from handlers.quote_sticker import quote_sticker_cmd
+    from handlers.iota_roulette import roulette_cmd, rjoin_cmd, bid_cmd
+    from handlers.iota_wheel import wheel_cmd
     from handlers.hack_game    import (
         hack_start_cmd, hack_register_cmd, hack_guess_cmd, hack_end_cmd
     )
@@ -450,6 +452,12 @@ def main():
 
     app.add_handler(CommandHandler("slots", slots_cmd))
     app.add_handler(CommandHandler("q", quote_sticker_cmd))
+
+    # ── 🎰 Iota Roulette + 🎡 Iota Wheel (Iota mini-game series) ─────────
+    app.add_handler(CommandHandler("roulette", roulette_cmd))
+    app.add_handler(CommandHandler("rjoin", rjoin_cmd))
+    app.add_handler(CommandHandler("bid", bid_cmd))
+    app.add_handler(CommandHandler("wheel", wheel_cmd))
 
     for c, f in [
         ("hack",     hack_start_cmd),
