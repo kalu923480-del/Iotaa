@@ -499,10 +499,17 @@ async def _promote(update, context, rest):
             tokens.pop(i)
             break
     uid, uname, _ = await _resolve(update, context, " ".join(tokens))
-    # ── Owner convenience: ".promote" with no target makes the OWNER an
-    #    admin of this group (provided the bot has the Add-Admins right),
-    #    even if the owner is only a normal member here. ──
-    if not uid and is_owner:
+    # ── Owner convenience: ".promote" with NO target at all (no reply, no
+    #    named user) makes the OWNER an admin of this group (provided the
+    #    bot has the Add-Admins right), even if the owner is only a normal
+    #    member here.
+    #    🔴 FIX: this must ONLY apply when there was genuinely no target.
+    #    If the owner replied to a user or named a @username but resolution
+    #    FAILED, we must NOT silently promote the owner instead — that
+    #    produced "ɴᴏᴛʜɪɴɢ Promoted To Junior Admin" for the wrong person.
+    #    Only self-promote when neither a reply nor an argument was given.
+    has_explicit_target = bool(msg.reply_to_message) or bool(tokens)
+    if not uid and is_owner and not has_explicit_target:
         uid = update.effective_user.id
         uname = mention(update.effective_user)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
@@ -531,7 +538,10 @@ async def _promote(update, context, rest):
         try:
             await context.bot.set_chat_administrator_custom_title(chat.id, uid, title_name)
         except Exception: pass
-        await track_promotion(uid, chat.id, update.effective_user.id)
+        try:
+            await track_promotion(uid, chat.id, update.effective_user.id)
+        except Exception:
+            logger.debug("track_promotion failed", exc_info=True)
         out = f"{uname} {sc('Promoted To')} {medal} {sc(title_name)}."
         if dropped:
             out += f"\n⚠️ {sc('Some rights skipped — I lack permission')}"
@@ -539,6 +549,9 @@ async def _promote(update, context, rest):
     except Exception as e:
         logger.exception("promote failed")
         await msg.reply_html(_fmt_err(e))
+    except Exception as e:
+        logger.warning(f"_promote failed: {e}")
+        await msg.reply_html("❌ " + sc("Couldn't complete promotion. Try again."))
 
 
 async def _demote(update, context, rest):
@@ -565,11 +578,17 @@ async def _demote(update, context, rest):
     rights = _build_rights()
     try:
         await promote_with_rights(context.bot, chat.id, uid, rights)
-        await remove_promotion(uid, chat.id)
+        try:
+            await remove_promotion(uid, chat.id)
+        except Exception:
+            logger.debug("remove_promotion failed", exc_info=True)
         await msg.reply_html(f"⬇️ {uname} <b>{sc('Demoted')}!</b>")
     except Exception as e:
         logger.exception("demote failed")
         await msg.reply_html(_fmt_err(e))
+    except Exception as e:
+        logger.warning(f"_demote failed: {e}")
+        await msg.reply_html("❌ " + sc("Couldn't complete demotion. Try again."))
 
 async def _demote_all(update, context):
     """

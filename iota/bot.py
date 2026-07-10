@@ -1023,6 +1023,38 @@ def main():
 
     app.post_init = post_init
 
+    # ── 🔴 ROOT-CAUSE FIX: never react to PAST / stale messages ──────────
+    # `drop_pending_updates=True` below only clears the backlog ONCE at
+    # startup. But on network reconnects / long-poll timeouts Telegram can
+    # REDISPLAY old updates (sometimes minutes/hours old), and any handler
+    # then acts on a message the user already moved on from — e.g. the bot
+    # suddenly "responds" to a promote/demote command from long ago. This
+    # guard intercepts EVERY update BEFORE dispatch and silently drops any
+    # whose effective message is older than the threshold, so the bot can
+    # never react to a past command or message no matter the cause.
+    from datetime import datetime, timezone as _tz
+    _STALE_UPDATE_SECONDS = 120  # ignore anything older than 2 minutes
+
+    _orig_process_update = app.process_update
+
+    async def _guarded_process_update(update):
+        try:
+            msg = update.effective_message
+            if msg is not None and msg.date is not None:
+                # msg.date is timezone-aware UTC; compare against now UTC.
+                age = (datetime.now(_tz.utc) - msg.date).total_seconds()
+                if age > _STALE_UPDATE_SECONDS:
+                    logger.debug(
+                        f"⏩ Skipped stale update ({age:.0f}s old) — "
+                        f"not reacting to past message."
+                    )
+                    return
+        except Exception:
+            logger.debug("staleness guard: date check failed", exc_info=True)
+        return await _orig_process_update(update)
+
+    app.process_update = _guarded_process_update
+
     # ── Handler registration summary ────────────────────────────────────
     # Confirms exactly how many handlers of each type made it onto the
     # Application, and explicitly verifies /panel is among them. If this
