@@ -3,7 +3,8 @@ Iota Admin Handler
 . or ! prefix commands
 Iota-style promote levels with titles
 """
-import re, time
+import re, time, logging
+logger = logging.getLogger(__name__)
 from telegram import Update, ChatPermissions, ChatAdministratorRights
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
@@ -512,8 +513,13 @@ async def _promote(update, context, rest):
         await msg.reply_html(err); return
     # ── Can't promote the owner or the bot itself ──
     creator = await _creator_of(context, chat)
-    bad = _is_target_invalid(uid, context, creator)
-    if bad: await msg.reply_html(bad); return
+    # Owner self-promote (".promote" with no target) is intended; don't
+    # block it on the "can't promote the group owner" rule even if the
+    # owner is also the group creator (they're already an admin, so the
+    # promote is a harmless idempotent no-op).
+    if not (is_owner and uid == OWNER_ID):
+        bad = _is_target_invalid(uid, context, creator)
+        if bad: await msg.reply_html(bad); return
     # ── Target must not already be the owner; skip if already admin ──
     info = PROMOTE_TITLES.get(level, PROMOTE_TITLES["1"])
     medal, title_name, rights_kw = info
@@ -530,7 +536,8 @@ async def _promote(update, context, rest):
         if dropped:
             out += f"\n⚠️ {sc('Some rights skipped — I lack permission')}"
         await msg.reply_html(out)
-    except TelegramError as e:
+    except Exception as e:
+        logger.exception("promote failed")
         await msg.reply_html(_fmt_err(e))
 
 
@@ -553,14 +560,15 @@ async def _demote(update, context, rest):
         cm = await context.bot.get_chat_member(chat.id, uid)
         if cm.status not in ("administrator", "creator"):
             await msg.reply_html(f"❌ {uname} {sc('is not an admin here!')}"); return
-    except TelegramError as e:
+    except Exception as e:
         await msg.reply_html(_fmt_err(e)); return
     rights = _build_rights()
     try:
         await promote_with_rights(context.bot, chat.id, uid, rights)
         await remove_promotion(uid, chat.id)
         await msg.reply_html(f"⬇️ {uname} <b>{sc('Demoted')}!</b>")
-    except TelegramError as e:
+    except Exception as e:
+        logger.exception("demote failed")
         await msg.reply_html(_fmt_err(e))
 
 async def _demote_all(update, context):
@@ -577,7 +585,7 @@ async def _demote_all(update, context):
     if err: await msg.reply_html(err); return
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
-    except TelegramError as e:
+    except Exception as e:
         await msg.reply_html(_fmt_err(e)); return
     rights = _build_rights()
     done = 0; skipped = 0
@@ -629,7 +637,8 @@ async def _add_power(update, context, rest):
         if dropped:
             out += f"\n⚠️ {sc('Some rights skipped — I lack permission')}"
         await msg.reply_html(out)
-    except TelegramError as e:
+    except Exception as e:
+        logger.exception("add_power failed")
         await msg.reply_html(_fmt_err(e))
 
 async def _remove_power(update, context, rest):
@@ -663,7 +672,8 @@ async def _remove_power(update, context, rest):
         if dropped:
             out += f"\n⚠️ {sc('Some rights skipped — I lack permission')}"
         await msg.reply_html(out)
-    except TelegramError as e:
+    except Exception as e:
+        logger.exception("remove_power failed")
         await msg.reply_html(_fmt_err(e))
 
 async def _title(update, context, rest):
@@ -679,7 +689,8 @@ async def _title(update, context, rest):
     try:
         await context.bot.set_chat_administrator_custom_title(chat.id, uid, title)
         await msg.reply_html(f"🏷️ {uname}'s {sc('title')}: <b>{safe_html(title) or '(none)'}</b>")
-    except TelegramError as e:
+    except Exception as e:
+        logger.exception("title failed")
         await msg.reply_html(_fmt_err(e))
 
 async def _pin(update, context):

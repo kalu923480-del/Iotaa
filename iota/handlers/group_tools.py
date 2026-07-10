@@ -118,56 +118,6 @@ async def del_link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except TelegramError as e:
         await update.message.reply_html(f"❌ {e}")
 
-# ── Promote with titles ───────────────────────────────────────────────────────
-
-PROMOTE_TITLES = {
-    "0": ("🥇", "Junior Admin",  dict(can_manage_chat=True)),
-    "1": ("🥈", "Admin",         dict(can_manage_chat=True, can_delete_messages=True,
-                                      can_restrict_members=True, can_invite_users=True)),
-    "2": ("🥉", "Senior Admin",  dict(can_manage_chat=True, can_delete_messages=True,
-                                      can_restrict_members=True, can_invite_users=True,
-                                      can_pin_messages=True, can_change_info=True)),
-    "3": ("🏅", "Full Admin",    dict(can_manage_chat=True, can_delete_messages=True,
-                                      can_restrict_members=True, can_invite_users=True,
-                                      can_pin_messages=True, can_change_info=True,
-                                      can_promote_members=True)),
-}
-
-async def promote_with_title(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                              uid: int, uname: str, level_str: str):
-    """Called from admin.py — promotes with Iota-style title."""
-    chat = update.effective_chat
-    info = PROMOTE_TITLES.get(level_str, PROMOTE_TITLES["1"])
-    medal, title_name, rights_kw = info
-    try:
-        from telegram import ChatAdministratorRights
-        # 🔴 FIX: same bug as handlers/admin.py — ChatAdministratorRights
-        # requires is_anonymous/can_manage_video_chats/etc. to be passed
-        # explicitly even when False; rights_kw here only has a partial
-        # set, which raised an uncaught TypeError on every call.
-        full_rights = dict(
-            is_anonymous=False, can_manage_chat=False, can_delete_messages=False,
-            can_manage_video_chats=False, can_restrict_members=False,
-            can_promote_members=False, can_change_info=False, can_invite_users=False,
-            can_post_messages=False, can_edit_messages=False, can_pin_messages=False,
-            can_post_stories=False, can_edit_stories=False, can_delete_stories=False,
-        )
-        full_rights.update(rights_kw)
-        rights = ChatAdministratorRights(**full_rights)
-        await promote_with_rights(context.bot, chat.id, uid, rights)
-        # Set custom title
-        try:
-            await context.bot.set_chat_administrator_custom_title(chat.id, uid, title_name)
-        except Exception:
-            pass
-        from utils.mongo_db import track_promotion
-        await track_promotion(uid, chat.id, update.effective_user.id)
-        await update.effective_message.reply_html(
-            f"{uname} {sc('Promoted To')} {medal} {sc(title_name)}."
-        )
-    except TelegramError as e:
-        await update.effective_message.reply_html(f"❌ {e}")
-
 # ── Welcome Back (after dead) ─────────────────────────────────────────────────
 
 async def welcome_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

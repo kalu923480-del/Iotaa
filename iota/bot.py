@@ -4,13 +4,14 @@
 ║  MongoDB + Dual AI + Full Features      ║
 ╚══════════════════════════════════════════╝
 """
-import logging, asyncio, os
+import logging, asyncio, os, time
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, CallbackQueryHandler, PreCheckoutQueryHandler, TypeHandler,
-    ChatJoinRequestHandler,
+    ChatJoinRequestHandler, ApplicationHandlerStop,
 )
+from motor.motor_asyncio import ReturnDocument
 import aiohttp
 from config import BOT_TOKEN, OWNER_ID, OWNER_USERNAME, WEBAPP_BASE_URL
 from utils.mongo_db import create_indexes, ensure_user
@@ -756,6 +757,56 @@ def main():
         except Exception:
             logger.debug("identity tracker: ensure_user failed", exc_info=True)
 
+    # ── Cross-instance update de-duplication ─────────────────────────────
+    # 🔴 ROOT-CAUSE FIX for "commands fire twice / on past messages" and the
+    #    "Conflict: terminated by other getUpdates request" 409 errors:
+    #    when two bot processes share the SAME bot token (e.g. a second
+    #    Render instance that didn't shut down, or a leftover deploy), BOTH
+    #    poll Telegram and each update gets handled by every instance. That
+    #    double-processing is exactly why a single ".promote" can show BOTH
+    #    a success ("…Promoted To Junior Admin") AND an error ("Make me an
+    #    admin…" / "…is not an admin here!") — one instance acted on fresh
+    #    state, the other on a different/older state.
+    #
+    #    We stamp every update's globally-unique update_id into a SHARED
+    #    MongoDB collection (so the lock works ACROSS processes, not just
+    #    within one). find_one_and_update with $setOnInsert + upsert is
+    #    atomic: the FIRST instance to arrive inserts and proceeds; every
+    #    other instance finds the row already there and stops the dispatch
+    #    chain via ApplicationHandlerStop. A TTL index auto-expires rows so
+    #    the collection stays tiny. Best-effort: if Mongo is unavailable we
+    #    simply let the update through (never block the bot).
+    async def _dedup_update(update, context):
+        uid = getattr(update, "update_id", None)
+        if uid is None:
+            return
+        try:
+            from utils.mongo_db import get_db
+            db = get_db()
+            # Create the TTL index once (auto-expires rows after 1h so the
+            # collection never grows unbounded). Best-effort.
+            if not getattr(_dedup_update, "_indexed", False):
+                try:
+                    await db.update_dedup.create_index("t", expireAfterSeconds=3600)
+                    _dedup_update._indexed = True
+                except Exception:
+                    logger.debug("dedup TTL index create failed", exc_info=True)
+            prior = await db.update_dedup.find_one_and_update(
+                {"_id": uid},
+                {"$setOnInsert": {"t": time.time()}},
+                upsert=True,
+                return_document=ReturnDocument.BEFORE,
+            )
+            if prior is not None:
+                logger.debug(f"⏭️ Dedup: skipping already-processed update {uid}")
+                raise ApplicationHandlerStop()
+        except ApplicationHandlerStop:
+            raise
+        except Exception:
+            logger.debug("dedup check failed; letting update through", exc_info=True)
+
+    app.add_handler(TypeHandler(Update, _dedup_update), group=-10)
+
     app.add_handler(TypeHandler(Update, _track_identity), group=-2)
 
     # ── Command execution logger (runs first, never blocks) ───────────
@@ -995,6 +1046,8 @@ def main():
     except Exception:
         logger.exception("Error while summarizing handler registration")
 
+    # The cross-instance dedup collection's TTL index is created lazily on
+    # first use (see _dedup_update) so we don't need an async context here.
     app.run_polling(drop_pending_updates=True)
 
 
