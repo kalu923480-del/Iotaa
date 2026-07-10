@@ -4,6 +4,54 @@ Iota Font System - Iota-style smallcaps/unicode fonts
 
 import re
 
+# Tags Telegram's Bot API HTML parser actually supports. Anything else that
+# looks like "<foo>" (e.g. a usage placeholder "<amount>") is an UNKNOWN tag
+# and makes Telegram reject the whole message with "unsupported start tag".
+_ALLOWED_TAGS = (
+    "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+    "code", "pre", "a", "tg-spoiler", "blockquote", "span",
+)
+_ALLOWED_TAG_RE = re.compile(
+    r"</?(?:" + "|".join(sorted(_ALLOWED_TAGS, key=len, reverse=True)) + r")"
+    r"(?:\s[^>]*)?>"
+)
+
+
+def _escape_unsupported_tags(text: str) -> str:
+    """
+    Escape any '<...>' that is NOT one of Telegram's allowed HTML tags, so
+    innocent usage placeholders like "<amount>" / "<model>" render as literal
+    text instead of crashing reply_html() with a BadRequest.
+
+    Allowed tags (and their attributes, e.g. <a href="...">) are preserved
+    verbatim so bold/code/links keep working. Idempotent: already-escaped
+    entities (&lt; &gt;) contain no raw '<' so they pass straight through.
+    """
+    if "<" not in text:
+        return text
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "<":
+            end = text.find(">", i)
+            if end == -1:
+                out.append("&lt;")
+                i += 1
+                continue
+            tag = text[i:end + 1]
+            if _ALLOWED_TAG_RE.fullmatch(tag):
+                out.append(tag)                 # real Telegram tag — keep it
+            else:
+                out.append("&lt;" + tag[1:-1].replace("<", "&lt;") + "&gt;")
+            i = end + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 # Smallcaps alphabet (Iota style)
 _SC = {
     'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ',
@@ -81,7 +129,7 @@ def sc(text: str) -> str:
             out.append(part)          # command / model name — keep literal
         else:
             out.append("".join(_SC.get(c, c) for c in part))
-    return "".join(out)
+    return _escape_unsupported_tags("".join(out))
 
 def bold_sc(text: str) -> str:
     """Smallcaps wrapped in HTML bold."""
@@ -118,7 +166,7 @@ def sc_all(text: str) -> str:
             out.append(part)          # tag / url / entity — keep verbatim
         else:
             out.append(sc(part))      # visible text — style it
-    return "".join(out)
+    return _escape_unsupported_tags("".join(out))
 
 
 # Alias used by the global outbound wrapper.
