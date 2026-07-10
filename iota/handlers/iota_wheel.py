@@ -6,6 +6,9 @@ A fortune wheel you spin for a chance at coins / gems. Different from
 weighted prize wheel with a 1-hour cooldown, and you can burn 💎 gems to
 skip the cooldown and spin again immediately.
 
+NOTE: every user-facing string below is wrapped with sc_all() (Iota-style
+smallcaps) so the output matches the rest of the bot.
+
   /wheel            spin (respects 1h cooldown)
   /wheel gems       pay 💎 gems to skip the cooldown and spin now
 
@@ -35,6 +38,7 @@ from utils.mongo_db import (
 )
 from utils.helpers import mention, fmt
 from utils.system_gate import games_gate
+from utils.fonts import sc_all
 
 logger = logging.getLogger(__name__)
 
@@ -70,21 +74,21 @@ async def wheel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if remaining > 0 and not skip:
         m, s = divmod(remaining, 60)
-        await msg.reply_html(
+        await msg.reply_html(sc_all(
             f"⏳ <b>Iota Wheel</b> thoda rest le raha hai...\n"
             f"Agla free spin: <b>{m}m {s}s</b> baad.\n\n"
             f"Ya fir abhi spin karne ke liye: <code>/wheel gems</code> "
             f"({GEM_SKIP_COST} 💎 use honge)."
-        )
+        ))
         return
 
     if skip:
         gems = d.get("gems", 0)
         if gems < GEM_SKIP_COST:
-            await msg.reply_html(
+            await msg.reply_html(sc_all(
                 f"❌ Cooldown skip karne ke liye {GEM_SKIP_COST} 💎 chahiye! "
                 f"Tere paas: {fmt(gems)} 💎"
-            )
+            ))
             return
         await deduct_gems(u.id, GEM_SKIP_COST)
 
@@ -112,9 +116,9 @@ async def wheel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d2 = await get_user(u.id)
     bal = fmt(d2.get("balance", 0))
     gem = fmt(d2.get("gems", 0))
-    await msg.reply_html(
+    await msg.reply_html(sc_all(
         f"🎡 <b>Iota Wheel spin!</b>\n\n"
         f"{label}\n{result}\n\n"
         f"💰 Coins: {bal}\n💎 Gems: {gem}\n"
         f"⏳ Agla free spin 1h baad."
-    )
+    ))

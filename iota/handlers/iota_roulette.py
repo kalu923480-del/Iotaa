@@ -7,6 +7,11 @@ A bid-elimination tournament, played in a group chat:
   /rjoin <amount>                  join during the 2-minute window
   /bid <amount>                    DM Iota a bid during a bidding round
 
+NOTE: every user-facing string below is wrapped with sc_all() (Iota-style
+smallcaps) so the game's output matches the rest of the bot. (The global
+output wrapper in bot.py also applies smallcaps, so this is idempotent and
+just makes the styling explicit + robust.)
+
 HOW IT WORKS
 ─────────────
 1. Host runs /roulette <stake>. A 2-minute join window opens.
@@ -38,6 +43,7 @@ from utils.mongo_db import (
 )
 from utils.helpers import mention, mention_id, fmt
 from utils.system_gate import games_gate
+from utils.fonts import sc_all
 
 logger = logging.getLogger(__name__)
 
@@ -87,22 +93,22 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = update.effective_chat.id
 
     if update.effective_chat.type == "private":
-        await msg.reply_html("❌ <b>/roulette group mein chalao!</b> 🎰")
+        await msg.reply_html(sc_all("❌ <b>/roulette group mein chalao!</b> 🎰"))
         return
 
     if cid in _GAMES and _GAMES[cid]["phase"] != "done":
-        await msg.reply_html("❌ Is group mein pehle se ek Iota Roulette chal raha hai! ⏳")
+        await msg.reply_html(sc_all("❌ Is group mein pehle se ek Iota Roulette chal raha hai! ⏳"))
         return
 
     if not context.args:
-        await msg.reply_html(
+        await msg.reply_html(sc_all(
             f"🎰 <b>Iota Roulette</b> 💙\n\n"
             f"Usage: <code>/roulette &lt;amount&gt; [coins|gems]</code>\n"
             f"Stake range: {fmt(MIN_STAKE)} – {fmt(MAX_STAKE)}\n\n"
             f"⏳ 2-minute join window shuru hoga. Doston ko bolo:\n"
             f"<code>/rjoin &lt;amount&gt;</code> (group mein)\n\n"
             f"Har round sabse kam bidder eliminate hoga. Last banda jeetega pot! 🏆"
-        )
+        ))
         return
 
     currency = "coins"
@@ -113,24 +119,24 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         stake = int(amount_txt)
     except ValueError:
-        await msg.reply_html("❌ Amount ek number hona chahiye!")
+        await msg.reply_html(sc_all("❌ Amount ek number hona chahiye!"))
         return
     if stake < MIN_STAKE or stake > MAX_STAKE:
-        await msg.reply_html(
+        await msg.reply_html(sc_all(
             f"❌ Stake {fmt(MIN_STAKE)} – {fmt(MAX_STAKE)} ke beech hona chahiye!"
-        )
+        ))
         return
 
     await ensure_user(u.id, u.username or "", u.full_name)
     d = await get_user(u.id)
     if currency == "gems":
         if d.get("gems", 0) < stake:
-            await msg.reply_html(f"❌ Enough gems nahi! 💎 Balance: {fmt(d.get('gems', 0))}")
+            await msg.reply_html(sc_all(f"❌ Enough gems nahi! 💎 Balance: {fmt(d.get('gems', 0))}"))
             return
         await deduct_gems(u.id, stake)
     else:
         if d.get("balance", 0) < stake:
-            await msg.reply_html(f"❌ Enough coins nahi! 💰 Balance: {fmt(d.get('balance', 0))}")
+            await msg.reply_html(sc_all(f"❌ Enough coins nahi! 💰 Balance: {fmt(d.get('balance', 0))}"))
             return
         await deduct_balance(u.id, stake)
 
@@ -157,18 +163,18 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _close_joining, JOIN_SECONDS, data={"chat_id": cid}
         )
     else:
-        await msg.reply_html("⚠️ Timer system unavailable — game can't auto-start. Try later.")
+        await msg.reply_html(sc_all("⚠️ Timer system unavailable — game can't auto-start. Try later."))
         _GAMES.pop(cid, None)
         return
 
-    await msg.reply_html(
+    await msg.reply_html(sc_all(
         f"🎰 <b>Iota Roulette shuru!</b> 💙\n\n"
         f"👑 Host: {mention(u)}\n"
         f"💰 Stake: {fmt(stake)} {currency} | Pot: {fmt(stake)} {currency}\n\n"
         f"⏳ <b>2-minute join window</b> — doston ko bolo:\n"
         f"<code>/rjoin {stake}</code> (group mein)\n\n"
         f"Round mein sabse kam bidder har round eliminate hoga. Last banda jeetega pot! 🏆"
-    )
+    ))
 
 
 # ── /rjoin <amount> ───────────────────────────────────────────────────────
@@ -179,53 +185,53 @@ async def rjoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = update.effective_chat.id
 
     if update.effective_chat.type == "private":
-        await msg.reply_html("❌ <b>/rjoin group mein chalao!</b> 🎰")
+        await msg.reply_html(sc_all("❌ <b>/rjoin group mein chalao!</b> 🎰"))
         return
 
     g = _GAMES.get(cid)
     if not g or g["phase"] != "joining":
-        await msg.reply_html("❌ Abhi koi joining window nahi khula. Pehle /roulette chalao!")
+        await msg.reply_html(sc_all("❌ Abhi koi joining window nahi khula. Pehle /roulette chalao!"))
         return
     if u.id in g["joined"]:
-        await msg.reply_html("❌ Tu pehle hi join kar chuka hai!")
+        await msg.reply_html(sc_all("❌ Tu pehle hi join kar chuka hai!"))
         return
     if u.id == g["host"]:
-        await msg.reply_html("❌ Host already andar hai, dobara join mat kar!")
+        await msg.reply_html(sc_all("❌ Host already andar hai, dobara join mat kar!"))
         return
     if not context.args:
-        await msg.reply_html(f"❌ Usage: <code>/rjoin {g['stake']}</code>")
+        await msg.reply_html(sc_all(f"❌ Usage: <code>/rjoin {g['stake']}</code>"))
         return
     try:
         amt = int(context.args[0])
     except ValueError:
-        await msg.reply_html("❌ Amount ek number hona chahiye!")
+        await msg.reply_html(sc_all("❌ Amount ek number hona chahiye!"))
         return
     if amt != g["stake"]:
-        await msg.reply_html(
+        await msg.reply_html(sc_all(
             f"❌ Stake exactly {fmt(g['stake'])} {g['currency']} hona chahiye, match kar!"
-        )
+        ))
         return
 
     await ensure_user(u.id, u.username or "", u.full_name)
     d = await get_user(u.id)
     if g["currency"] == "gems":
         if d.get("gems", 0) < amt:
-            await msg.reply_html(f"❌ Enough gems nahi! 💎")
+            await msg.reply_html(sc_all("❌ Enough gems nahi! 💎"))
             return
         await deduct_gems(u.id, amt)
     else:
         if d.get("balance", 0) < amt:
-            await msg.reply_html(f"❌ Enough coins nahi! 💰")
+            await msg.reply_html(sc_all("❌ Enough coins nahi! 💰"))
             return
         await deduct_balance(u.id, amt)
 
     g["players"].append(u.id)
     g["joined"][u.id] = True
     g["pot"] += amt
-    await msg.reply_html(
+    await msg.reply_html(sc_all(
         f"✅ {mention(u)} joined! 👥 Players: {len(g['players'])} | "
         f"Pot: {fmt(g['pot'])} {g['currency']}"
-    )
+    ))
 
 
 # ── /bid <amount>  (DM only — keep your bid secret!) ───────────────────
@@ -235,37 +241,37 @@ async def bid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
 
     if update.effective_chat.type != "private":
-        await msg.reply_html("🤫 <b>Bid DM mein bhejo!</b> Game ke group mein mat likho — secret rakho! 🎯")
+        await msg.reply_html(sc_all("🤫 <b>Bid DM mein bhejo!</b> Game ke group mein mat likho — secret rakho! 🎯"))
         return
 
     g = _game_by_player(u.id)
     if not g or g["phase"] != "bidding":
-        await msg.reply_html("❌ Koi active bidding round nahi hai ya tu game mein nahi hai.")
+        await msg.reply_html(sc_all("❌ Koi active bidding round nahi hai ya tu game mein nahi hai."))
         return
     if u.id not in g["alive"]:
-        await msg.reply_html("❌ Tu eliminate ho chuka hai, bid nahi kar sakta. 💀")
+        await msg.reply_html(sc_all("❌ Tu eliminate ho chuka hai, bid nahi kar sakta. 💀"))
         return
     if u.id in g["bidded"]:
-        await msg.reply_html("❌ Tune is round mein already bid kar diya hai.")
+        await msg.reply_html(sc_all("❌ Tune is round mein already bid kar diya hai."))
         return
     if not context.args:
-        await msg.reply_html(
+        await msg.reply_html(sc_all(
             "Usage: <code>/bid &lt;amount&gt;</code>\n"
             "Round mein sabse kam se ZYADA bid dal, warna eliminate! 🎯"
-        )
+        ))
         return
     try:
         amt = int(context.args[0])
     except ValueError:
-        await msg.reply_html("❌ Bid ek number hona chahiye!")
+        await msg.reply_html(sc_all("❌ Bid ek number hona chahiye!"))
         return
     if amt <= 0:
-        await msg.reply_html("❌ Bid 0 se zyada hona chahiye!")
+        await msg.reply_html(sc_all("❌ Bid 0 se zyada hona chahiye!"))
         return
     if g["min_bid"] > 0 and amt <= g["min_bid"]:
-        await msg.reply_html(
+        await msg.reply_html(sc_all(
             f"❌ Tera bid current lowest ({fmt(g['min_bid'])}) se ZYADA hona chahiye!"
-        )
+        ))
         return
 
     # (Bids are pure numbers — no money moves. Balance is NOT consumed.)
@@ -273,9 +279,9 @@ async def bid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     g["bidded"][u.id] = True
     g["min_bid"] = amt if g["min_bid"] == 0 else min(g["min_bid"], amt)
 
-    await msg.reply_html(
+    await msg.reply_html(sc_all(
         f"🎯 Bid lock: {fmt(amt)}. Ab wait kar round khatam hone ka! 🤞"
-    )
+    ))
 
 
 # ── Timers ──────────────────────────────────────────────────────────────────
@@ -290,8 +296,10 @@ async def _close_joining(context: ContextTypes.DEFAULT_TYPE):
             await _refund(pid, g["stake"], g["currency"])
         await context.bot.send_message(
             cid,
-            f"😅 Game cancel! Sirf {len(g['players'])} player aaye. "
-            f"Sabka stake wapas. 🔁",
+            sc_all(
+                f"😅 Game cancel! Sirf {len(g['players'])} player aaye. "
+                f"Sabka stake wapas. 🔁"
+            ),
             parse_mode="HTML",
         )
         _GAMES.pop(cid, None)
@@ -317,7 +325,7 @@ async def _begin_round(context: ContextTypes.DEFAULT_TYPE):
     g["min_bid"] = 0
     total_rounds = len(g["players"]) - 1
 
-    alert = (
+    alert = sc_all(
         f"🎯 <b>Round {g['round']} / {total_rounds}</b>\n\n"
         f"Players ({len(g['alive'])}): {await _names(g['alive'])}\n\n"
         f"Apne <b>DM</b> mein <code>/bid &lt;amount&gt;</code> bhejo — amount current "
@@ -330,8 +338,10 @@ async def _begin_round(context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 pid,
-                f"🎯 Round {g['round']} shuru! DM mein <code>/bid &lt;amount&gt;</code> bhejo "
-                f"(current lowest se zyada). {BID_SECONDS}s mein bid nahi toh eliminate! ⏳",
+                sc_all(
+                    f"🎯 Round {g['round']} shuru! DM mein <code>/bid &lt;amount&gt;</code> bhejo "
+                    f"(current lowest se zyada). {BID_SECONDS}s mein bid nahi toh eliminate! ⏳"
+                ),
                 parse_mode="HTML",
             )
         except Exception:
@@ -363,9 +373,11 @@ async def _end_round(context: ContextTypes.DEFAULT_TYPE):
     loser_name = lu.get("full_name") or "User"
     await context.bot.send_message(
         cid,
-        f"🎰 <b>Round {g['round']} khatam!</b>\n\n"
-        f"💀 Eliminated: {mention_id(loser, loser_name)} (bid {fmt(lowest_val)})\n"
-        f"🟢 Bach gaye ({len(g['alive'])}): {await _names(g['alive'])}",
+        sc_all(
+            f"🎰 <b>Round {g['round']} khatam!</b>\n\n"
+            f"💀 Eliminated: {mention_id(loser, loser_name)} (bid {fmt(lowest_val)})\n"
+            f"🟢 Bach gaye ({len(g['alive'])}): {await _names(g['alive'])}"
+        ),
         parse_mode="HTML",
     )
 
@@ -393,10 +405,12 @@ async def _finish(context: ContextTypes.DEFAULT_TYPE, cid: int):
     wname = wu.get("full_name") or "User"
     await context.bot.send_message(
         cid,
-        f"🏆 <b>Iota Roulette Winner!</b> 💙\n\n"
-        f"👑 {mention_id(winner, wname)} jeet gaya pot of "
-        f"<b>{fmt(pot)} {currency}</b>!\n\n"
-        f"Mubarak ho! 💙",
+        sc_all(
+            f"🏆 <b>Iota Roulette Winner!</b> 💙\n\n"
+            f"👑 {mention_id(winner, wname)} jeet gaya pot of "
+            f"<b>{fmt(pot)} {currency}</b>!\n\n"
+            f"Mubarak ho! 💙"
+        ),
         parse_mode="HTML",
     )
     _GAMES.pop(cid, None)
