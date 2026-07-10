@@ -11,7 +11,7 @@ from telegram.ext import (
     filters, CallbackQueryHandler, PreCheckoutQueryHandler, TypeHandler,
     ChatJoinRequestHandler, ApplicationHandlerStop,
 )
-from motor.motor_asyncio import ReturnDocument
+from pymongo import ReturnDocument
 import aiohttp
 from config import BOT_TOKEN, OWNER_ID, OWNER_USERNAME, WEBAPP_BASE_URL
 from utils.mongo_db import create_indexes, ensure_user
