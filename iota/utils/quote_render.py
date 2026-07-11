@@ -27,11 +27,12 @@ from utils.font_manager import load_font, load_emoji_font
 logger = logging.getLogger(__name__)
 
 SCALE = 2
-CARD_W = 512
+CARD_W = 512               # max card width (sticker cap) in CSS px
+MIN_W = 280                # min card width in CSS px
 PADDING = 18
 INSET = 14
 AVATAR_SIZE = 92
-RADIUS = 22
+RADIUS = 26
 NAME_FONT_SIZE = 25
 MAX_FONT_SIZE = 38
 MIN_FONT_SIZE = 16
@@ -427,7 +428,11 @@ def _draw_avatar(card, avatar_bytes, letter, color, x, y, size):
 def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
                       reply_preview=None, timestamp=None, border=True,
                       border_width=None, border_color=None):
-    """Render a polished quote card. See module docstring for params."""
+    """Render a polished quote card. See module docstring for params.
+
+    The card is sized dynamically: its width follows the content (clamped to
+    a min/max) and its height grows with the text, with equal top/bottom
+    padding so there is no wasted blank space."""
     if not messages:
         raise QuoteRenderError("❌ Nothing to quote.")
 
@@ -448,32 +453,90 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
     deva = _has_devanagari(body_source) or _has_devanagari(name)
     rtl = _has_rtl(name) or _has_rtl(body_source)
 
-    # Scale all geometry to HiDPI then downscale at the end.
-    cw = CARD_W * SCALE
+    # HiDPI scaled geometry.
     pad = PADDING * SCALE
     inset = INSET * SCALE
     av = AVATAR_SIZE * SCALE
     radius = RADIUS * SCALE
     name_size = NAME_FONT_SIZE * SCALE
 
-    header_h = av
-    reply_h = 0
+    has_reply = False
+    rp = rp_name = ""
+    has_media = False
     if reply_preview:
-        reply_h = 30 * SCALE
-    text_top = inset + pad + header_h + 14 * SCALE + reply_h + 6 * SCALE
-    body_max_w = cw - 2 * (pad + inset)
+        rp = _normalize_unicode((reply_preview.get("text") or "").strip())
+        rp_name = _normalize_unicode((reply_preview.get("name") or "Someone").strip())
+        if rp:
+            has_reply = True
+            has_media = bool(reply_preview.get("media"))
 
-    max_body_h = (CARD_W if mode == "sticker" else 900) * SCALE - text_top - pad - inset
-    chain, size, lines, lh = _fit_body(body_source, deva, ef, body_max_w, max_body_h)
+    # ── Layout (top → body) to derive the height cap for font fitting ─────
+    av_x = pad + inset
+    av_y = pad + inset
+    header_gap = 10 * SCALE
+    reply_block = 28 * SCALE if has_reply else 0
+    div_gap = 2 * SCALE
+    body_gap = 12 * SCALE
+    header_bottom = av_y + av + header_gap + reply_block
+    div_y0 = header_bottom + div_gap
+    body_y0 = div_y0 + body_gap
+    H0 = body_y0
 
-    card_h = max(CARD_W, text_top + lh * len(lines) + pad + inset) * 1
-    card_h = int(card_h)
+    allowed_total = (CARD_W if mode == "sticker" else 920) * SCALE
+    max_body_h = max(40 * SCALE, allowed_total - H0 - (pad + inset))
+
+    inner_max = CARD_W * SCALE - 2 * (pad + inset)
+    chain, size, lines, lh = _fit_body(body_source, deva, ef, inner_max, max_body_h)
+
+    def _w(items, sz):
+        return sum(_item_w(it, sz) for it in items)
+
+    body_widest = max((_w(ln, size) for ln in lines), default=0)
+
+    # Name width (full, for sizing).
+    nf_chain = [
+        _pick_text_font(name_size, bold=True, devanagari=_has_devanagari(name)),
+        _pick_text_font(name_size, bold=False, devanagari=_has_devanagari(name)),
+        _dejavu(name_size),
+    ]
+    nef = _pick_emoji_font()
+    name_items_full = [_itemize(c, nf_chain, nef, name_size) for c in _graphemes(name)]
+    name_w = _w(name_items_full, name_size)
+    header_inner = av + 14 * SCALE + name_w
+
+    # Reply width (full, for sizing).
+    reply_inner = 0
+    rp_size = 16 * SCALE
+    rp_text_w = 0
+    if has_reply:
+        rp_chain = [
+            _pick_text_font(rp_size, devanagari=_has_devanagari(rp)),
+            _pick_text_font(rp_size, bold=True, devanagari=_has_devanagari(rp)),
+            _dejavu(rp_size),
+        ]
+        thumb = 34 * SCALE if has_media else 0
+        strip = 3 * SCALE
+        gap_thumb = 8 * SCALE if thumb else 0
+        txt = rp_name + ": " + rp
+        rp_items_full = [_itemize(c, rp_chain, ef, rp_size) for c in _graphemes(txt)]
+        rp_text_w = _w(rp_items_full, rp_size)
+        reply_inner = strip + thumb + gap_thumb + rp_text_w + 8 * SCALE
+
+    desired_inner = max(body_widest, header_inner, reply_inner)
+    css_w = desired_inner / SCALE + 2 * (PADDING + INSET)
+    css_w = int(min(CARD_W, max(MIN_W, css_w)))
+    cw = css_w * SCALE
+    inner_w = cw - 2 * (pad + inset)
+
+    # ── Dynamic height: bottom padding equals top padding ─────────────────
+    card_h = int(body_y0 + lh * len(lines) + (pad + inset))
+    card_h = max(card_h, int(body_y0 + (pad + inset) + 20 * SCALE))
 
     # ── Background (gradient) + soft drop shadow ────────────────────────
     bg = Image.new("RGBA", (cw, card_h), (0, 0, 0, 0))
     grad = Image.new("RGBA", (cw, card_h), (0, 0, 0, 0))
     gd = ImageDraw.Draw(grad)
-    top = _lighten(pal["bg"], 26)
+    top = _lighten(pal["bg"], 32)
     for yy in range(card_h):
         t = yy / (card_h - 1) if card_h > 1 else 0
         col = tuple(int(top[i] + (pal["bg"][i] - top[i]) * t) for i in range(3)) + (255,)
@@ -484,7 +547,7 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
     shadow = Image.new("RGBA", (cw, card_h), (0, 0, 0, 0))
     ImageDraw.Draw(shadow).rounded_rectangle(
         (inset, inset + 6 * SCALE, cw - inset, card_h - inset + 6 * SCALE),
-        radius=radius, fill=(0, 0, 0, 50))
+        radius=radius, fill=(0, 0, 0, 48))
     shadow = shadow.filter(ImageFilter.GaussianBlur(14))
 
     card = Image.new("RGBA", (cw, card_h), (0, 0, 0, 0))
@@ -497,81 +560,61 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
         bcol = border_color if border_color else pal["accent"]
         ImageDraw.Draw(card).rounded_rectangle(
             (inset, inset, cw - inset, card_h - inset),
-            radius=radius, outline=_alpha(bcol, 130), width=bw)
+            radius=radius, outline=_alpha(bcol, 95), width=bw)
 
     draw = ImageDraw.Draw(card)
 
-    # Avatar
-    av_x = pad + inset
-    av_y = pad + inset
+    # Avatar (vertically centered with the name row).
     letter = (name[:1] or "?").upper()
     _draw_avatar(card, avatar_bytes, letter, pal["accent"], av_x, av_y, av)
 
     # Name
-    nf_chain = [
-        _pick_text_font(name_size, bold=True, devanagari=_has_devanagari(name)),
-        _pick_text_font(name_size, bold=False, devanagari=_has_devanagari(name)),
-        _dejavu(name_size),
-    ]
-    nef = _pick_emoji_font()
     name_x = av_x + av + 14 * SCALE
     name_y = av_y + (av - name_size) // 2 - 2 * SCALE
     max_name_w = cw - name_x - pad - inset - 8 * SCALE
-    disp_items = [_itemize(c, nf_chain, nef, name_size) for c in _graphemes(name)]
-    while disp_items and sum(_item_w(it, name_size) for it in disp_items) > max_name_w:
+    disp_items = list(name_items_full)
+    while disp_items and _w(disp_items, name_size) > max_name_w:
         disp_items = disp_items[:-1]
-    if len(disp_items) < len(list(_graphemes(name))):
-        disp_items = disp_items + [('text', nf_chain[0])] if False else \
-            [('…', nf_chain[0])]
+    if len(disp_items) < len(name_items_full):
+        disp_items = disp_items + [('…', nf_chain[0])]
     _draw_line(draw, card, name_x, name_y, disp_items, name_size, pal["name"],
                _has_rtl(name), max_name_w, nef)
 
     # Reply preview (nested quote, Telegram-style)
-    cur_y = av_y + av + 12 * SCALE
-    if reply_preview:
-        rp = _normalize_unicode((reply_preview.get("text") or "").strip())
-        rp_name = _normalize_unicode((reply_preview.get("name") or "Someone").strip())
-        if rp:
-            rp_size = 16 * SCALE
-            rp_chain = [
-                _pick_text_font(rp_size, devanagari=_has_devanagari(rp)),
-                _pick_text_font(rp_size, bold=True, devanagari=_has_devanagari(rp)),
-                _dejavu(rp_size),
-            ]
-            rmax = cw - 2 * (pad + inset) - 10 * SCALE
-            has_media = bool(reply_preview.get("media"))
-            thumb = 34 * SCALE if has_media else 0
-            text_x = pad + inset + (3 * SCALE) + thumb + (8 * SCALE if thumb else 0)
-            # color strip
-            draw.line((pad + inset, cur_y - 4 * SCALE, pad + inset, cur_y + 18 * SCALE),
-                      fill=pal["accent"], width=3 * SCALE)
-            if has_media:
-                box = Image.new("RGBA", (thumb, thumb), _alpha(pal["accent"], 40))
-                ImageDraw.Draw(box).rounded_rectangle(
-                    (0, 0, thumb, thumb), radius=6 * SCALE,
-                    outline=_alpha(pal["accent"], 160), width=2 * SCALE)
-                card.paste(box, (int(pad + inset + 3 * SCALE), int(cur_y)), box)
-            txt = rp_name + ": " + rp
-            txt_items = [_itemize(c, rp_chain, ef, rp_size) for c in _graphemes(txt)]
-            # fit one line, truncate with ellipsis
-            while txt_items and sum(_item_w(it, rp_size) for it in txt_items) > rmax - (text_x - (pad + inset)):
-                txt_items = txt_items[:-1]
-            if len(txt_items) < len(list(_graphemes(txt))):
-                txt_items = txt_items + [('…', rp_chain[0])]
-            _draw_line(draw, card, text_x, cur_y, txt_items, rp_size,
-                       pal["reply"], _has_rtl(rp), rmax, ef)
-            cur_y += 30 * SCALE
+    cur_y = av_y + av + header_gap
+    if has_reply:
+        rmax = cw - pad - inset - (pad + inset + 3 * SCALE + (34 * SCALE if has_media else 0)
+                                   + (8 * SCALE if has_media else 0))
+        text_x = pad + inset + 3 * SCALE + (34 * SCALE if has_media else 0) \
+            + (8 * SCALE if has_media else 0)
+        draw.line((pad + inset, cur_y - 4 * SCALE, pad + inset, cur_y + 18 * SCALE),
+                  fill=pal["accent"], width=3 * SCALE)
+        if has_media:
+            thumb = 34 * SCALE
+            box = Image.new("RGBA", (thumb, thumb), _alpha(pal["accent"], 40))
+            ImageDraw.Draw(box).rounded_rectangle(
+                (0, 0, thumb, thumb), radius=6 * SCALE,
+                outline=_alpha(pal["accent"], 160), width=2 * SCALE)
+            card.paste(box, (int(pad + inset + 3 * SCALE), int(cur_y)), box)
+        txt_items = list(rp_items_full)
+        while txt_items and _w(txt_items, rp_size) > rmax:
+            txt_items = txt_items[:-1]
+        if len(txt_items) < len(rp_items_full):
+            txt_items = txt_items + [('…', rp_chain[0])]
+        _draw_line(draw, card, text_x, cur_y, txt_items, rp_size,
+                   pal["reply"], _has_rtl(rp), rmax, ef)
+        cur_y += reply_block
 
     # Divider
-    div_y = cur_y + 2 * SCALE
+    div_y = cur_y + div_gap
     draw.line((pad + inset, div_y, cw - pad - inset, div_y),
               fill=pal["divider"], width=max(1, SCALE // 2))
 
     # Message body
-    y = float(div_y + 14 * SCALE)
+    y = float(div_y + body_gap)
     for line in lines:
         _draw_line(draw, card, float(pad + inset), y, line, size, pal["text"],
-                   rtl, body_max_w, ef)
+                   rtl, inner_w, ef)
         y += lh
 
     # Timestamp (Telegram-style, bottom-right)
@@ -579,22 +622,19 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
         ts_size = 15 * SCALE
         ts_font = _pick_text_font(ts_size)
         tw = ts_font.getlength(timestamp)
-        drop = Image.new("RGBA", (int(tw), ts_size), (0, 0, 0, 0))
-        ImageDraw.Draw(drop).text((0, 0), timestamp, font=ts_font,
-                                  fill=_alpha(pal["bg"], 140))
-        card.paste(drop, (int(cw - pad - inset - tw), int(card_h - pad - inset - ts_size)), drop)
         draw.text((cw - pad - inset - tw, card_h - pad - inset - ts_size),
                   timestamp, font=ts_font, fill=pal["ts"])
 
     # Downscale to final (anti-aliased) resolution.
     out_h = int(card_h / SCALE)
-    final = card.resize((CARD_W, out_h), Image.LANCZOS)
+    final = card.resize((css_w, out_h), Image.LANCZOS)
 
     buf = io.BytesIO()
     if mode == "sticker":
         out = Image.new("RGBA", (CARD_W, CARD_W), (0, 0, 0, 0))
         paste_y = max(0, (CARD_W - out_h) // 2)
-        out.paste(final, (0, paste_y), final)
+        paste_x = max(0, (CARD_W - css_w) // 2)
+        out.paste(final, (paste_x, paste_y), final)
         out.save(buf, format="WEBP", lossless=True)
     else:
         final.save(buf, format="PNG")
