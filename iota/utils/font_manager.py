@@ -194,3 +194,22 @@ def load_emoji_font(size: int = 109) -> ImageFont.FreeTypeFont | None:
         except Exception as e2:
             logger.warning(f"emoji font load failed entirely: {e2}")
             return None
+
+
+def ensure_fonts():
+    """Make sure every bundled quote-renderer font exists locally, fetching
+    any that are missing from the network (cached in assets/fonts/). Safe to
+    call at deploy/start time — fonts already present are left untouched,
+    and system-installed fallbacks (e.g. DejaVu) are used as-is.
+
+    Returns True when all fonts resolved (either locally or downloaded)."""
+    ok = True
+    for name in list(_FONT_URLS.keys()):
+        try:
+            if not get_font_path(name):
+                logger.warning(f"ensure_fonts: could not resolve {name}")
+                ok = False
+        except Exception as e:
+            logger.warning(f"ensure_fonts: error resolving {name}: {e}")
+            ok = False
+    return ok
