@@ -31,7 +31,7 @@ CARD_W = 512               # max canvas width for sticker (css px)
 MIN_W = 200                # min card width (css px)
 PADDING = 18               # left/right inner padding (css px)
 TOP_PAD = 14
-BOTTOM_PAD = 18
+BOTTOM_PAD = 22
 HEADER_GAP = 8             # gap between header and message / reply
 AVATAR_SIZE = 52           # avatar diameter (css px)
 AV_GAP = 10                # gap between avatar and card (css px)
@@ -55,9 +55,9 @@ THEMES = {
                "divider": (226, 226, 226), "ts": (150, 150, 150),
                "reply": (120, 120, 120)},
     "purple": {"bg": (34, 22, 44),     "accent": (94, 58, 115),
-               "name": (245, 240, 250), "text": (232, 226, 240),
-               "divider": (60, 40, 75),  "ts": (165, 145, 180),
-               "reply": (180, 160, 200)},
+               "name": (238, 232, 245), "text": (212, 206, 222),
+               "divider": (60, 40, 75),  "ts": (150, 132, 165),
+               "reply": (170, 152, 188)},
     "blue":   {"bg": (17, 32, 58),     "accent": (94, 176, 255),
                "name": (132, 196, 255), "text": (224, 238, 255),
                "divider": (46, 72, 110),  "ts": (140, 165, 200),
@@ -236,11 +236,86 @@ def _graphemes(text: str):
         i = j
 
 
-def _itemize(cluster, chain, emoji_font, size):
-    """Return a draw item: ('text', font) or ('emoji', None)."""
-    if _is_emoji(cluster):
-        return ('emoji', None)
-    return ('text', _glyph_font(chain, cluster))
+_arabic_cache: dict = {}
+_cjk_cache: dict = {}
+
+
+def _arabic_font(size):
+    if size not in _arabic_cache:
+        _arabic_cache[size] = load_font("NotoNaskhArabic-Regular.ttf", size)
+    return _arabic_cache[size]
+
+
+def _cjk_font(size):
+    if size not in _cjk_cache:
+        _cjk_cache[size] = load_font("NotoSansCJKtc-Regular.otf", size)
+    return _cjk_cache[size]
+
+
+def _script_of(ch):
+    if _is_emoji(ch):
+        return "emoji"
+    if not ch:
+        return "latin"
+    cp = ord(ch[0])
+    if (0x0600 <= cp <= 0x06FF) or (0x0750 <= cp <= 0x077F) or \
+       (0x08A0 <= cp <= 0x08FF) or (0xFB50 <= cp <= 0xFDFF) or \
+       (0xFE70 <= cp <= 0xFEFF):
+        return "arabic"
+    if (0x4E00 <= cp <= 0x9FFF) or (0x3400 <= cp <= 0x4DBF) or \
+       (0x3000 <= cp <= 0x30FF) or (0x3040 <= cp <= 0x309F) or \
+       (0x30A0 <= cp <= 0x30FF) or (0xAC00 <= cp <= 0xD7AF) or \
+       (0x1100 <= cp <= 0x11FF) or (0x20000 <= cp <= 0x2A6DF) or \
+       (0xF900 <= cp <= 0xFAFF):
+        return "cjk"
+    if 0x0900 <= cp <= 0x097F:
+        return "deva"
+    return "latin"
+
+
+def _font_for_script(script, text, chain, size):
+    """Pick the best font for a same-script run of text."""
+    if script == "arabic":
+        f = _arabic_font(size)
+        if f and _has_glyph(f, text):
+            return f
+    elif script == "cjk":
+        f = _cjk_font(size)
+        if f and _has_glyph(f, text):
+            return f
+    elif script == "deva":
+        f = _pick_text_font(size, devanagari=True)
+        if f and _has_glyph(f, text):
+            return f
+    return _glyph_font(chain, text)
+
+
+def _itemize_line(text, chain, emoji_font, size):
+    """Turn a line/word into draw items, grouping consecutive same-script
+    graphemes into one run so FreeType can shape/join them (Arabic, CJK,
+    Devanagari) and kern Latin text properly."""
+    items = []
+    cur_script = None
+    cur = ""
+    for cl in _graphemes(text):
+        if _is_emoji(cl):
+            if cur:
+                items.append(('text', _font_for_script(cur_script, cur, chain, size)))
+                cur = ""
+                cur_script = None
+            items.append(('emoji', None))
+            continue
+        s = _script_of(cl)
+        if s != cur_script:
+            if cur:
+                items.append(('text', _font_for_script(cur_script, cur, chain, size)))
+            cur = cl
+            cur_script = s
+        else:
+            cur += cl
+    if cur:
+        items.append(('text', _font_for_script(cur_script, cur, chain, size)))
+    return items
 
 
 # ── Measurement & layout ─────────────────────────────────────────────────
@@ -259,7 +334,7 @@ def _item_w(item, size):
 
 
 def _line_h(size):
-    return int(size * 1.30)
+    return int(size * 1.35)
 
 
 def _wrap_para(para, chain, emoji_font, size, max_w):
@@ -271,7 +346,7 @@ def _wrap_para(para, chain, emoji_font, size, max_w):
     curw = 0
     sp = _space_w(chain[0], size)
     for ti, tok in enumerate(tokens):
-        items = [_itemize(c, chain, emoji_font, size) for c in _graphemes(tok)]
+        items = _itemize_line(tok, chain, emoji_font, size)
         tok_w = sum(_item_w(it, size) for it in items)
         if ti > 0:
             if cur and curw + sp + tok_w <= max_w:
@@ -495,7 +570,7 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
     av_gap = AV_GAP * SCALE
     radius = RADIUS * SCALE
     name_size = NAME_FONT_SIZE * SCALE
-    name_lh = int(name_size * 1.30)
+    name_lh = int(name_size * 1.35)
     ts_size = 14 * SCALE
     M = 14 * SCALE
 
@@ -533,7 +608,7 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
         _dejavu(name_size),
     ]
     nef = _pick_emoji_font()
-    name_items_full = [_itemize(c, nf_chain, nef, name_size) for c in _graphemes(name)]
+    name_items_full = _itemize_line(name, nf_chain, nef, name_size)
     name_w = _w(name_items_full, name_size)
 
     reply_inner = 0
@@ -548,7 +623,7 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
         strip = 3 * SCALE
         gap_thumb = 8 * SCALE if thumb else 0
         txt = rp_name + ": " + rp
-        rp_items_full = [_itemize(c, rp_chain, ef, rp_size) for c in _graphemes(txt)]
+        rp_items_full = _itemize_line(txt, rp_chain, ef, rp_size)
         reply_inner = strip + thumb + gap_thumb + _w(rp_items_full, rp_size) + 8 * SCALE
 
     desired_inner = max(body_widest, name_w, reply_inner)
@@ -570,8 +645,8 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
     # Soft drop shadow under the card only.
     shadow = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     ImageDraw.Draw(shadow).rounded_rectangle(
-        (card_x, card_y + 6 * SCALE, card_x + card_w, card_y + card_h + 6 * SCALE),
-        radius=radius, fill=(0, 0, 0, 26))
+        (card_x, card_y + 8 * SCALE, card_x + card_w, card_y + card_h + 8 * SCALE),
+        radius=radius, fill=(0, 0, 0, 34))
     shadow = shadow.filter(ImageFilter.GaussianBlur(14))
     canvas.paste(shadow, (0, 0), shadow)
 
@@ -596,10 +671,13 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
 
     draw = ImageDraw.Draw(card)
 
-    # Avatar — outside the card, vertically centered (slightly below center).
+    # Avatar — outside the card, centered on the header + first message line
+    # (not the whole card) so it reads as aligned with the username/text.
     letter = (name[:1] or "?").upper()
+    msg_top_local = top_pad + name_lh + hgap + (reply_block + hgap if has_reply else 0)
+    avatar_center_local = (top_pad + (msg_top_local + lh)) / 2
     av_cx = M + av_d / 2
-    av_cy = card_y + card_h / 2 + 4 * SCALE
+    av_cy = card_y + avatar_center_local
     _draw_avatar(canvas, avatar_bytes, letter, pal["accent"],
                  int(av_cx - av_d / 2), int(av_cy - av_d / 2), av_d)
 

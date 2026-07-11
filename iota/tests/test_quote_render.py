@@ -55,6 +55,22 @@ class QuoteRenderTest(unittest.TestCase):
                                  mode="png", reply_preview=rp2)
         self.assertGreater(len(out2), 1000)
 
+    def test_unicode_scripts(self):
+        # Hindi, Arabic (RTL), Chinese, Japanese, Korean, ZWJ emoji must all
+        # render without tofu/crash thanks to the bundled script fonts.
+        cases = [
+            ("राहुल", "नमस्ते दोस्तों 🌞"),
+            ("محمد", "مرحبا بالعالم 🌍"),
+            ("小明", "你好世界 ✅"),
+            ("太郎", "こんにちは世界 🌸"),
+            ("영희", "안녕하세요 세계 💡"),
+            ("Fam", "👨‍👩‍👧‍👦 family"),
+        ]
+        for nm, tx in cases:
+            out = render_quote_card([{"name": nm, "text": tx}], None,
+                                    mode="png", theme="purple", timestamp="8:30")
+            self.assertGreater(len(out), 1000)
+
     def test_border_toggle(self):
         base = len(self._basic(mode="png", border=True))
         nb = len(self._basic(mode="png", border=False))

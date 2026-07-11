@@ -15,6 +15,7 @@ Usage:
 Flags can be combined, e.g.  /q 3 purple png noborder
 """
 import logging
+import time
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -24,6 +25,10 @@ from utils.quote_render import render_quote_card, QuoteRenderError
 from utils.safe_html import safe_html
 
 logger = logging.getLogger(__name__)
+
+# In-memory avatar cache (uid -> (expiry_ts, bytes)) so repeated /q in busy
+# groups don't re-download the same profile photo every time.
+_avatar_cache: dict = {}
 
 
 def _reply_thumb_file_id(msg):
@@ -190,8 +195,14 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             fid = await get_profile_photo_id(context, sender.id)
             if fid:
-                tgf = await context.bot.get_file(fid)
-                avatar_bytes = bytes(await tgf.download_as_bytearray())
+                now = time.time()
+                cached = _avatar_cache.get(sender.id)
+                if cached and cached[0] > now and cached[1] is not None:
+                    avatar_bytes = cached[1]
+                else:
+                    tgf = await context.bot.get_file(fid)
+                    avatar_bytes = bytes(await tgf.download_as_bytearray())
+                    _avatar_cache[sender.id] = (now + 3600, avatar_bytes)
         except Exception as e:
             logger.debug(f"/q avatar fetch failed for {sender.id}: {e}")
             avatar_bytes = None

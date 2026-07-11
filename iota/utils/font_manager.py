@@ -64,6 +64,11 @@ _FONT_URLS = {
     # Color emoji (Pillow only loads the 109px strike of this file, so we
     # always request it at size 109 and scale the glyphs down ourselves).
     "NotoColorEmoji.ttf": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf",
+    # Arabic + CJK coverage so Hindi/Urdu/Arabic/Chinese/Japanese/Korean
+    # render instead of tofu. The CJK OTF is large but only loaded when a
+    # CJK codepoint is actually present in the text.
+    "NotoNaskhArabic-Regular.ttf": "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoNaskhArabic-Regular.ttf",
+    "NotoSansCJKtc-Regular.otf": "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoSansCJKtc-Regular.otf",
 }
 
 # System fallback paths to try if bundled/downloaded fonts aren't
