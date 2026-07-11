@@ -19,6 +19,7 @@ from utils.mongo_db import (get_db, ensure_user, get_user, update_user,
                              add_balance, total_users, log_stars_payment,
                              get_stars_total, mark_user_unreachable,
                              mark_user_reachable, get_broadcastable_users,
+                             get_all_groups,
                              add_sticker_to_pack, remove_sticker_from_pack,
                              get_stickers_for_mood, list_all_sticker_packs,
                              clear_sticker_pack, create_broadcast_record,
@@ -130,9 +131,12 @@ async def owner_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/addcoins /removecoins /addgems\n"
         f"/addpremium /removepremium /addcoupon\n\n"
         f"<b>Users:</b>\n"
-        f"/banuser /unbanuser /broadcast\n"
-        f"/announce all|group_id msg\n"
-        f"/dm &lt;user_id&gt; &lt;msg&gt; — DM any user via the bot\n\n"
+        f"/banuser /unbanuser /dm &lt;user_id&gt; &lt;msg&gt;\n"
+        f"/broadcast &lt;msg&gt; — DM all users (tag with {{mention}}/{{name}}/{{user}}/{{id}})\n"
+        f"/broadcast groups|all &lt;msg&gt; — send to groups / both\n"
+        f"/broadcast forward &lt;users|groups|all&gt; — forward a replied message\n"
+        f"/forward &lt;users|groups|all&gt; — forward a replied message (standalone)\n"
+        f"/announce all|&lt;group_id&gt; &lt;msg&gt; — announce to groups\n"
         f"🤖 <b>AI Providers:</b>\n"
         f"/providerstatus — Overview of all providers & keys\n"
         f"/setmodel free|premium {placeholder('model')} [provider]\n"
@@ -318,169 +322,266 @@ async def unban_user_cmd_owner(update, context):
 
 
 @owner_only
+def _apply_broadcast_tags(text, uid, name, username):
+    """Replace per-user tagging placeholders in a broadcast message."""
+    if not text:
+        return text
+    mention = f'<a href="tg://user?id={uid}">{name}</a>'
+    user_ref = f'@{username}' if username else mention
+    return (text
+            .replace("{mention}", mention)
+            .replace("{name}", name)
+            .replace("{user}", user_ref)
+            .replace("{id}", str(uid)))
+
+
+async def _send_media(bot, chat_id, reply, caption):
+    """Send whatever media type `reply` is to `chat_id`, with an optional
+    HTML `caption`. Returns the sent message."""
+    if reply.photo:
+        return await bot.send_photo(chat_id, reply.photo[-1].file_id, caption=caption, parse_mode="HTML")
+    if reply.video:
+        return await bot.send_video(chat_id, reply.video.file_id, caption=caption, parse_mode="HTML")
+    if reply.animation:
+        return await bot.send_animation(chat_id, reply.animation.file_id, caption=caption, parse_mode="HTML")
+    if reply.sticker:
+        m = await bot.send_sticker(chat_id, reply.sticker.file_id)
+        if caption:
+            await bot.send_message(chat_id, caption, parse_mode="HTML")
+        return m
+    if reply.voice:
+        return await bot.send_voice(chat_id, reply.voice.file_id, caption=caption, parse_mode="HTML")
+    if reply.audio:
+        return await bot.send_audio(chat_id, reply.audio.file_id, caption=caption, parse_mode="HTML")
+    if reply.document:
+        return await bot.send_document(chat_id, reply.document.file_id, caption=caption, parse_mode="HTML")
+    if reply.video_note:
+        m = await bot.send_video_note(chat_id, reply.video_note.file_id)
+        if caption:
+            await bot.send_message(chat_id, caption, parse_mode="HTML")
+        return m
+    return await bot.send_message(chat_id, caption or "", parse_mode="HTML")
+
+
+
 async def broadcast_cmd(update, context):
     """
-    Send a message to every reachable USER who has talked to the bot
-    (DM blast). Supports ALL media types, not just text:
+    Powerful broadcast to every reachable USER (default), every GROUP, or
+    ALL of them. Supports text, ALL media types, per-user TAGGING, and a
+    forward mode that re-sends an existing message (preserving its origin).
 
-      • Reply to a photo + /broadcast <caption>   → photo broadcast
-      • Reply to a video + /broadcast <caption>    → video broadcast
-      • Reply to a GIF/animation + /broadcast ...   → animation broadcast
-      • Reply to a sticker + /broadcast              → sticker broadcast
-      • Reply to a voice/audio/document + /broadcast  → that file type
-      • No reply, just /broadcast <text>                → plain text (as before)
+    USAGE
+      /broadcast <text>                      → DM text to all users (tagged)
+      /broadcast groups <text>               → text to all groups
+      /broadcast all <text>                  → users + groups
+      /broadcast forward <users|groups|all>  → (reply to a msg) forward it
+      (reply to photo/video/gif/sticker/voice/document) /broadcast [scope]
+        → broadcast that media (caption supports {mention}/{name}/{user}/{id})
 
-    WHY THE FAILURE RATE WAS SO HIGH (94 failed / 9 sent):
-    Telegram permanently blocks a bot from DMing any user who has blocked
-    the bot or deleted their account — this is a Telegram-side rule, not
-    something a bot can work around. The old code retried EVERY known
-    user on EVERY broadcast, including ones who'd been permanently
-    unreachable for a long time, so the failure count looked huge even
-    though the bot was working correctly. This version:
-      1. Categorizes each failure (blocked / deactivated / rate-limited /
-         other) instead of a single opaque count.
-      2. Automatically marks permanently-blocked users as unreachable in
-         the database, so THEY ARE SKIPPED on all future broadcasts —
-         the failure count will now shrink over time instead of staying
-         stuck at the same size forever.
-      3. Properly handles Telegram's flood-control (RetryAfter) by
-         waiting the exact time Telegram asks for, instead of treating
-         a rate-limit as a failure.
+    TAGGING (text broadcasts to users only): the following placeholders are
+    replaced per-recipient so every user gets a personalised message:
+      {mention} → <a href="tg://user?id=UID">Name</a>
+      {name}   → their first name
+      {user}   → @username (falls back to mention if no username)
+      {id}     → their user id
+
+    Robustness: categorises failures, auto-marks permanently-blocked users
+    unreachable, and honours Telegram RetryAfter flood-control.
     """
     msg = update.message
     reply = msg.reply_to_message
+    args = list(context.args) if context.args else []
 
-    caption = safe_html(" ".join(context.args)) if context.args else ""
-    if not reply and not caption:
-        await update.message.reply_html(
+    SCOPES = ("users", "groups", "all")
+    scope = "users"
+    mode = "send"
+    if args and args[0].lower() in SCOPES:
+        scope = args.pop(0).lower()
+    if args and args[0].lower() == "forward":
+        mode = "forward"
+        args.pop(0)
+
+    text = safe_html(" ".join(args)) if args else ""
+
+    if mode == "forward":
+        if not reply:
+            await msg.reply_html(
+                "📨 Reply to the message you want to forward, then:\n"
+                "/broadcast forward <users|groups|all>"
+            ); return
+        await _run_forward(update, context, scope, reply.chat.id, reply.message_id)
+        return
+
+    if not reply and not text:
+        await msg.reply_html(
             f"Usage: /broadcast {placeholder('msg')}\n\n"
-            f"💡 Reply to a photo/video/GIF/sticker/voice/document with "
-            f"/broadcast (optionally with a caption) to broadcast that media "
-            f"to every user instead of just text."
+            "🌐 Scope: prefix with 'users' (default), 'groups', or 'all'.\n"
+            "🏷️ Tag users in text: {{mention}} {{name}} {{user}} {{id}}.\n"
+            "📎 Reply to media to broadcast it (caption supports tags).\n"
+            "📨 Forward a message: /broadcast forward <users|groups|all> (reply to it)"
         ); return
 
-    db = get_db()
-    users = await get_broadcastable_users()
-    total = len(users)
-    if total == 0:
-        await update.message.reply_html("❌ No broadcastable users found!"); return
+    bid = await create_broadcast_record("broadcast", text or "[media]", update.effective_user.id)
+    status = await msg.reply_html(f"📢 Sending broadcast to <b>{scope}</b>...")
+    sent = blocked = other = 0
 
-    status = await update.message.reply_html(f"📢 Sending to {total} users...")
-
-    # 🆕 Record this broadcast so it can be deleted later (from one chat
-    # or everywhere) and so the owner has a full history of past
-    # broadcasts via /broadcasthistory. See utils/mongo_db.py for the
-    # underlying storage functions.
-    bid = await create_broadcast_record("broadcast", caption or "[media]", update.effective_user.id)
-
-    sent = 0
-    blocked = 0       # user blocked the bot / deactivated — marked unreachable
-    rate_limited_retries = 0
-    other_failed = 0
-
-    async def _send_one(uid: int):
-        """Sends the broadcast (media or text) to a single user. Returns
-        ('sent', message) | ('blocked', None) | ('other', None). Handles
-        flood-control by waiting and retrying once, rather than counting
-        it as a failure."""
+    async def _to_user(u):
+        nonlocal sent, blocked, other
+        uid = u["_id"]
+        name = (u.get("full_name") or "User").split("\n")[0][:64]
+        uname = u.get("username")
         for attempt in range(2):
             try:
-                if reply and reply.photo:
-                    m = await context.bot.send_photo(uid, reply.photo[-1].file_id, caption=caption or None, parse_mode="HTML")
-                elif reply and reply.video:
-                    m = await context.bot.send_video(uid, reply.video.file_id, caption=caption or None, parse_mode="HTML")
-                elif reply and reply.animation:
-                    m = await context.bot.send_animation(uid, reply.animation.file_id, caption=caption or None, parse_mode="HTML")
-                elif reply and reply.sticker:
-                    m = await context.bot.send_sticker(uid, reply.sticker.file_id)
-                    if caption:
-                        await context.bot.send_message(uid, caption, parse_mode="HTML")
-                elif reply and reply.voice:
-                    m = await context.bot.send_voice(uid, reply.voice.file_id, caption=caption or None, parse_mode="HTML")
-                elif reply and reply.audio:
-                    m = await context.bot.send_audio(uid, reply.audio.file_id, caption=caption or None, parse_mode="HTML")
-                elif reply and reply.document:
-                    m = await context.bot.send_document(uid, reply.document.file_id, caption=caption or None, parse_mode="HTML")
-                elif reply and reply.video_note:
-                    m = await context.bot.send_video_note(uid, reply.video_note.file_id)
-                    if caption:
-                        await context.bot.send_message(uid, caption, parse_mode="HTML")
+                if reply:
+                    cap = _apply_broadcast_tags(text, uid, name, uname) if text else None
+                    m = await _send_media(context.bot, uid, reply, cap)
                 else:
                     m = await context.bot.send_message(
-                        uid, f"📢 <b>Announcement — Iota Bot</b>\n\n{caption}", parse_mode="HTML"
-                    )
-                return "sent", m
+                        uid, f"📢 <b>Broadcast</b>\n\n{_apply_broadcast_tags(text, uid, name, uname)}",
+                        parse_mode="HTML")
+                sent += 1
+                if m:
+                    await add_broadcast_target(bid, uid, m.message_id)
+                return
             except RetryAfter as e:
-                # Telegram is asking us to slow down — wait exactly as long
-                # as it says, then retry this same user once. This is NOT
-                # a real failure, just backpressure.
                 await asyncio.sleep(e.retry_after + 0.5)
                 continue
             except Forbidden:
-                # Bot was blocked, kicked, or the user deactivated their
-                # account — this is PERMANENT, so mark them unreachable
-                # to keep future broadcasts fast and accurate.
                 await mark_user_unreachable(uid, reason="blocked_or_deactivated")
-                return "blocked", None
+                blocked += 1
+                return
             except BadRequest as e:
-                err = str(e).lower()
-                if "chat not found" in err or "user is deactivated" in err:
+                if "chat not found" in str(e).lower() or "user is deactivated" in str(e).lower():
                     await mark_user_unreachable(uid, reason="chat_not_found")
-                    return "blocked", None
-                logger.debug(f"broadcast: BadRequest for {uid}: {e}")
-                return "other", None
-            except Exception as e:
-                logger.debug(f"broadcast: failed to DM {uid}: {e}")
-                return "other", None
-        return "other", None
-
-    for i, u in enumerate(users):
-        result, sent_msg = await _send_one(u["_id"])
-        if result == "sent":
-            sent += 1
-            if sent_msg:
-                await add_broadcast_target(bid, u["_id"], sent_msg.message_id)
-        elif result == "blocked":
-            blocked += 1
-        else:
-            other_failed += 1
-
-        # Telegram allows roughly 30 messages/second bot-wide across ALL
-        # chats — 0.05s between sends keeps us safely under that without
-        # needing flood-control retries in the common case.
-        await asyncio.sleep(0.05)
-
-        # Live progress update every 50 users so the owner isn't staring
-        # at a stale "Sending..." message during a big broadcast.
-        if (i + 1) % 50 == 0:
-            try:
-                await status.edit_text(
-                    f"📢 Sending... {i+1}/{total}\n"
-                    f"✅ {sent}  🚫 {blocked} (blocked)  ⚠️ {other_failed} (other)",
-                    parse_mode="HTML"
-                )
+                    blocked += 1
+                else:
+                    other += 1
+                return
             except Exception:
-                pass
+                other += 1
+                return
+
+    async def _to_group(gid):
+        nonlocal sent, other
+        for attempt in range(2):
+            try:
+                if reply:
+                    m = await _send_media(context.bot, gid, reply, text or None)
+                else:
+                    m = await context.bot.send_message(
+                        gid, f"📢 <b>Announcement</b>\n\n{text}" if text else "📢 Announcement",
+                        parse_mode="HTML")
+                sent += 1
+                if m:
+                    await add_broadcast_target(bid, gid, m.message_id)
+                return
+            except RetryAfter as e:
+                await asyncio.sleep(e.retry_after + 0.5)
+                continue
+            except Exception:
+                other += 1
+                return
+
+    total = 0
+    if scope in ("users", "all"):
+        users = await get_broadcastable_users()
+        total += len(users)
+        for i, u in enumerate(users):
+            await _to_user(u)
+            await asyncio.sleep(0.05)
+            if (i + 1) % 50 == 0:
+                try:
+                    await status.edit_text(f"📢 Users {i+1}/{len(users)} · ✅{sent} 🚫{blocked} ⚠️{other}", parse_mode="HTML")
+                except Exception:
+                    pass
+    if scope in ("groups", "all"):
+        groups = await get_all_groups()
+        total += len(groups)
+        for g in groups:
+            await _to_group(g["_id"])
+            await asyncio.sleep(0.1)
 
     await status.edit_text(
-        f"📢 <b>Broadcast complete!</b>\n\n"
-        f"🆔 ID: <code>{bid}</code>\n"
-        f"✅ Sent: {sent}\n"
-        f"🚫 Blocked/deactivated: {blocked} (auto-marked, won't be retried next time)\n"
-        f"⚠️ Other failures: {other_failed}\n\n"
-        f"📊 Reachable audience shrinks to {total - blocked} for next broadcast.\n\n"
-        f"💡 /delbroadcast {bid} to delete this broadcast from everyone.",
-        parse_mode="HTML"
-    )
+        f"📢 <b>Broadcast complete!</b>\n\n🆔 ID: <code>{bid}</code>\n"
+        f"✅ Sent: {sent}\n🚫 Blocked: {blocked}\n⚠️ Other: {other}\n\n"
+        f"💡 /delbroadcast {bid} to delete this broadcast.",
+        parse_mode="HTML")
+
+
+@owner_only
+async def forward_cmd(update, context):
+    """
+    Forward an existing message to users / groups / all, preserving its
+    original forward origin (unlike /broadcast which re-sends a copy).
+
+    USAGE: reply to any message, then
+      /forward <users|groups|all>
+    """
+    msg = update.message
+    reply = msg.reply_to_message
+    args = list(context.args) if context.args else []
+    SCOPES = ("users", "groups", "all")
+    scope = args[0].lower() if args and args[0].lower() in SCOPES else "users"
+    if not reply:
+        await msg.reply_html(
+            "📨 Reply to the message you want to forward, then:\n"
+            "/forward <users|groups|all>"
+        ); return
+    await _run_forward(update, context, scope, reply.chat.id, reply.message_id)
+
+
+async def _run_forward(update, context, scope, from_chat, message_id):
+    """Forward one message (by chat+id) to the chosen scope, recording each
+    target so it can be deleted later via /delbroadcast."""
+    bid = await create_broadcast_record("forward", f"fwd:{from_chat}:{message_id}", update.effective_user.id)
+    status = await update.message.reply_html(f"📨 Forwarding to <b>{scope}</b>...")
+    sent = blocked = other = 0
+
+    async def _fwd(cid, is_user):
+        nonlocal sent, blocked, other
+        for attempt in range(2):
+            try:
+                m = await context.bot.forward_message(chat_id=cid, from_chat_id=from_chat, message_id=message_id)
+                sent += 1
+                if m:
+                    await add_broadcast_target(bid, cid, m.message_id)
+                return
+            except RetryAfter as e:
+                await asyncio.sleep(e.retry_after + 0.5)
+                continue
+            except Forbidden:
+                if is_user:
+                    await mark_user_unreachable(cid, reason="blocked_or_deactivated")
+                blocked += 1
+                return
+            except Exception:
+                other += 1
+                return
+
+    if scope in ("users", "all"):
+        for u in await get_broadcastable_users():
+            await _fwd(u["_id"], True)
+            await asyncio.sleep(0.05)
+    if scope in ("groups", "all"):
+        for g in await get_all_groups():
+            await _fwd(g["_id"], False)
+            await asyncio.sleep(0.1)
+
+    await status.edit_text(
+        f"📨 <b>Forward complete!</b>\n\n🆔 ID: <code>{bid}</code>\n"
+        f"✅ Sent: {sent}\n🚫 Blocked: {blocked}\n⚠️ Other: {other}\n\n"
+        f"💡 /delbroadcast {bid} to delete this forward.",
+        parse_mode="HTML")
 
 
 @owner_only
 async def announce_cmd(update, context):
     """
-    Send a message to ALL groups the bot is in, or one specific group.
-    Like /broadcast, this now supports replying to any media type
-    (photo/video/GIF/sticker/voice/document) to announce that to groups
-    instead of only plain text.
+    Announce a message to ALL groups the bot is in, or one specific group.
+    Supports replying to any media type (photo/video/GIF/sticker/voice/
+    document) to announce that to groups instead of only plain text.
+    NOTE: the old "— Iota Bot" footer has been removed; the message is sent
+    exactly as written (with a small 📢 prefix for visibility).
     """
     msg = update.message
     reply = msg.reply_to_message
@@ -497,12 +598,10 @@ async def announce_cmd(update, context):
             "(optionally with a caption) to send that media instead of text."
         ); return
 
-    # target is always the first word; the rest (or a reply's caption) is the message
     if not args:
         await update.message.reply_html("❌ Specify a target: /announce all|<group_id> ..."); return
     target = args[0].lower()
     message = safe_html(" ".join(args[1:])) if len(args) > 1 else ""
-    full_msg = f"{message}\n\n— Iota Bot" if message else "— Iota Bot"
 
     async def _send_to(cid: int):
         if reply and reply.photo:
@@ -521,17 +620,15 @@ async def announce_cmd(update, context):
         elif reply and reply.document:
             return await context.bot.send_document(cid, reply.document.file_id, caption=message or None, parse_mode="HTML")
         else:
-            return await context.bot.send_message(cid, full_msg, parse_mode="HTML")
+            return await context.bot.send_message(cid, f"📢 {message}" if message else "📢 Announcement", parse_mode="HTML")
 
-    # 🆕 Record this announce so it can be deleted later (from one group
-    # or everywhere) and appears in /broadcasthistory.
     bid = await create_broadcast_record("announce", message or "[media]", update.effective_user.id)
 
     if target == "all":
-        db = get_db(); chats = await db.group_settings.find({}, {"_id": 1}).to_list(10000)
+        groups = await get_all_groups()
         sent = 0; failed = 0
-        status = await update.message.reply_html(f"📢 Sending to {len(chats)} groups...")
-        for ch in chats:
+        status = await update.message.reply_html(f"📢 Sending to {len(groups)} groups...")
+        for ch in groups:
             try:
                 m = await _send_to(ch["_id"])
                 sent += 1

@@ -787,7 +787,7 @@ async def announce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target = args[0].lower()
     message = " ".join(args[1:])
-    full_msg = f"📢 <b>Announcement from Iota Bot</b>\n\n{message}\n\n— @Its_iotabot"
+    full_msg = f"📢 <b>Announcement</b>\n\n{message}"
 
     if target == "all":
         # Get all unique chat_ids from group_settings

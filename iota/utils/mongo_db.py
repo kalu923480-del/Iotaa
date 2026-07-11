@@ -212,9 +212,12 @@ async def mark_user_reachable(uid):
     )
 
 async def get_broadcastable_users():
-    """Users who haven't been marked unreachable — the actual DM-able audience."""
+    """Users who haven't been marked unreachable — the actual DM-able audience.
+    Projects full_name/username too so broadcast tagging ({mention}/{name})
+    can be personalised without an extra per-user lookup."""
     return await get_db().users.find(
-        {"dm_unreachable": {"$ne": True}}, {"_id": 1}
+        {"dm_unreachable": {"$ne": True}},
+        {"_id": 1, "full_name": 1, "username": 1},
     ).to_list(200000)
 
 # ── Broadcast/Announce history + deletion ───────────────────────────────
@@ -251,6 +254,12 @@ async def list_broadcast_history(limit: int = 20):
     return await get_db().broadcast_history.find(
         {}, sort=[("created_at", -1)], limit=limit
     ).to_list(limit)
+
+
+async def get_all_groups():
+    """All group chat ids the bot is a member of (for group broadcasts/
+    announces). Returns a list of {"_id": chat_id} dicts."""
+    return await get_db().group_settings.find({}, {"_id": 1}).to_list(100000)
 
 # ── Card rank ────────────────────────────────────────────────────────
 
