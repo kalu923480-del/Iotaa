@@ -424,6 +424,36 @@ def _draw_avatar(card, avatar_bytes, letter, color, x, y, size):
     card.paste(circle, (x, y), mask)
 
 
+def _draw_round_thumb(media_bytes, size, radius):
+    """Cover-crop a media thumbnail to a square and round its corners (AA)."""
+    try:
+        im = Image.open(io.BytesIO(media_bytes)).convert("RGBA")
+    except Exception:
+        return None
+    w, h = im.size
+    if w <= 0 or h <= 0:
+        return None
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    im = im.crop((left, top, left + side, top + side)).resize((size, size), Image.LANCZOS)
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size, size), radius=radius, fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(0.8))
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(im, (0, 0), mask)
+    return out
+
+
+def _reply_placeholder(card, thumb, tx, ty, pal):
+    """Fallback box shown when a replied media thumbnail can't be fetched."""
+    box = Image.new("RGBA", (thumb, thumb), _alpha(pal["accent"], 40))
+    ImageDraw.Draw(box).rounded_rectangle(
+        (0, 0, thumb, thumb), radius=6 * SCALE,
+        outline=_alpha(pal["accent"], 160), width=2 * SCALE)
+    card.paste(box, (tx, int(ty)), box)
+
+
 # ── Main entrypoint ──────────────────────────────────────────────────────
 def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
                       reply_preview=None, timestamp=None, border=True,
@@ -591,11 +621,16 @@ def render_quote_card(messages, avatar_bytes, theme="dark", mode="sticker",
                   fill=pal["accent"], width=3 * SCALE)
         if has_media:
             thumb = 34 * SCALE
-            box = Image.new("RGBA", (thumb, thumb), _alpha(pal["accent"], 40))
-            ImageDraw.Draw(box).rounded_rectangle(
-                (0, 0, thumb, thumb), radius=6 * SCALE,
-                outline=_alpha(pal["accent"], 160), width=2 * SCALE)
-            card.paste(box, (int(pad + inset + 3 * SCALE), int(cur_y)), box)
+            tx = int(pad + inset + 3 * SCALE)
+            mb = reply_preview.get("media_bytes")
+            if mb:
+                timg = _draw_round_thumb(mb, thumb, 6 * SCALE)
+                if timg is not None:
+                    card.paste(timg, (tx, int(cur_y)), timg)
+                else:
+                    _reply_placeholder(card, thumb, tx, cur_y, pal)
+            else:
+                _reply_placeholder(card, thumb, tx, cur_y, pal)
         txt_items = list(rp_items_full)
         while txt_items and _w(txt_items, rp_size) > rmax:
             txt_items = txt_items[:-1]

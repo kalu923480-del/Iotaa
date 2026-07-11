@@ -37,6 +37,24 @@ class QuoteRenderTest(unittest.TestCase):
                                 timestamp="14:32")
         self.assertGreater(len(out), 1000)
 
+    def test_reply_thumbnail(self):
+        from PIL import Image
+        import io as _io
+        buf = _io.BytesIO()
+        Image.new("RGB", (60, 40), (200, 40, 80)).save(buf, "PNG")
+        media_bytes = buf.getvalue()
+        rp = {"name": "किसी ने", "text": "यह जवाब है 😊",
+              "media": True, "media_bytes": media_bytes}
+        out = render_quote_card([{"name": "बॉब", "text": "नमस्ते 👋"}],
+                                None, mode="png", reply_preview=rp,
+                                timestamp="14:32")
+        self.assertGreater(len(out), 1000)
+        # Placeholder fallback when media flagged but no bytes.
+        rp2 = {"name": "X", "text": "hi", "media": True}
+        out2 = render_quote_card([{"name": "A", "text": "yo"}], None,
+                                 mode="png", reply_preview=rp2)
+        self.assertGreater(len(out2), 1000)
+
     def test_border_toggle(self):
         base = len(self._basic(mode="png", border=True))
         nb = len(self._basic(mode="png", border=False))

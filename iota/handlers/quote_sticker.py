@@ -25,6 +25,25 @@ from utils.safe_html import safe_html
 
 logger = logging.getLogger(__name__)
 
+
+def _reply_thumb_file_id(msg):
+    """Best thumbnail file_id for a replied message that contains media,
+    or None if there is no usable thumbnail."""
+    if msg.photo:
+        return msg.photo[-1].file_id
+    if msg.video and msg.video.thumbnail:
+        return msg.video.thumbnail.file_id
+    if msg.animation and msg.animation.thumbnail:
+        return msg.animation.thumbnail.file_id
+    if msg.sticker and msg.sticker.thumbnail:
+        return msg.sticker.thumbnail.file_id
+    if msg.audio and msg.audio.thumbnail:
+        return msg.audio.thumbnail.file_id
+    if msg.document and msg.document.thumbnail:
+        return msg.document.thumbnail.file_id
+    return None
+
+
 MAX_QUOTE_LENGTH = 400      # per-message cap before we refuse
 MAX_THREAD = 10             # hard cap on /q N
 MODES = {"png", "img"}
@@ -143,7 +162,19 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rpname = (ru.full_name or ru.first_name or "Someone") if ru else "Someone"
             rp_media = bool(rp.photo or rp.video or rp.animation
                             or rp.sticker or rp.audio or rp.voice or rp.document)
-            reply_preview = {"name": rpname, "text": rptext[:120], "media": rp_media}
+            # Fetch the actual replied-media thumbnail so the reply preview
+            # shows a real image, not just a placeholder box.
+            media_bytes = None
+            if rp_media:
+                tfid = _reply_thumb_file_id(rp)
+                if tfid:
+                    try:
+                        tgf = await context.bot.get_file(tfid)
+                        media_bytes = bytes(await tgf.download_as_bytearray())
+                    except Exception as e:
+                        logger.debug(f"/q reply media fetch failed: {e}")
+            reply_preview = {"name": rpname, "text": rptext[:120],
+                             "media": rp_media, "media_bytes": media_bytes}
 
     timestamp = None
     if reply.date:
