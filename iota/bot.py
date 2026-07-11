@@ -267,11 +267,17 @@ def main():
         reverse_cmd, mock_cmd, binary_cmd, morse_cmd, hash_cmd, password_cmd,
         nickname_cmd, birthday_cmd, birthday_daily_loop,
         todo_cmd, countdown_cmd, giveaway_cmd, giveaway_join_callback,
-        bank_cmd, deposit_cmd, withdraw_cmd, loan_cmd, repay_cmd,
-        networth_cmd, lottery_cmd,
+        lottery_cmd,
         donate_cmd, repair_cmd, raidlog_cmd, recruit_cmd,
         aijoke_cmd, advice_cmd, roastme_cmd, aistory_cmd,
     )
+
+    # ── Banking system (canonical module) ────────────────────────────
+    from handlers.banking import (
+        bank_cmd, deposit_cmd, withdraw_cmd, loan_cmd, repay_cmd,
+        transfer_cmd, savings_cmd, networth_cmd, banking_maintenance_loop,
+    )
+    from handlers.marketplace import bazaar_cmd
 
     # ── /start /help ──────────────────────────────────────────────────
     app.add_handler(CommandHandler("start",  start_cmd))
@@ -350,12 +356,13 @@ def main():
     ]:
         app.add_handler(CommandHandler(c, f))
 
-    # 🆕 Economy extras: bank / loan / lottery (@economy_gate already
-    # applied at the function definitions in handlers/new_features_v2.py)
+    # 🆕 Economy extras: bank / loan / lottery / savings / transfer / bazaar
+    # (@economy_gate already applied at the function definitions)
     for c, f in [
         ("bank", bank_cmd), ("deposit", deposit_cmd), ("withdraw", withdraw_cmd),
         ("loan", loan_cmd), ("repay", repay_cmd), ("networth", networth_cmd),
-        ("lottery", lottery_cmd),
+        ("transfer", transfer_cmd), ("savings", savings_cmd),
+        ("lottery", lottery_cmd), ("bazaar", bazaar_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 
@@ -1008,6 +1015,9 @@ def main():
         asyncio.create_task(_memory_cleanup_job())
         asyncio.create_task(_premium_expiry_job(application.bot))
         asyncio.create_task(_connect_expiry_job(application.bot))
+        # 🏦 Banking maintenance: daily savings interest + loan overdue penalty
+        from handlers.banking import banking_maintenance_loop
+        asyncio.create_task(banking_maintenance_loop(application.bot))
         # 🔁 Keep a Render/pass free Web Service awake 24/7 by self-pinging
         # its own /health route (prevents the 15-min inactivity spin-down
         # that would otherwise kill the long-poll bot too).
