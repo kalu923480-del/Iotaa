@@ -64,12 +64,12 @@ class QuoteRenderTest(unittest.TestCase):
     def test_dynamic_sizing(self):
         from PIL import Image
         import io as _io
-        # Short message -> compact, min-width card (no wasted blank space).
+        # Short message -> compact card (avatar sits outside, no blank space).
         short = render_quote_card([{"name": "Al", "text": "hi"}], None,
                                   mode="png", timestamp="9:05")
         im = Image.open(_io.BytesIO(short))
-        self.assertEqual(im.size[0], 280)          # MIN_W
-        self.assertLess(im.size[1], 512)           # height follows content
+        self.assertGreater(im.size[0], 250)        # avatar + min card
+        self.assertLess(im.size[1], 200)           # height follows content
         # Sticker stays a 512x512 square regardless of content.
         st = render_quote_card([{"name": "Al", "text": "hi"}], None,
                                mode="sticker")
