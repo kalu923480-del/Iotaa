@@ -1,5 +1,5 @@
 """Iota Bot - MongoDB Async Database Layer (motor)"""
-import time, re
+import time, re, uuid
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_URI, DB_NAME
 
@@ -541,6 +541,25 @@ async def get_bot_promotions(cid):
 
 async def remove_promotion(uid, cid):
     await get_db().admin_promotions.delete_one({"_id":f"{uid}_{cid}"})
+
+
+# ── Whispers (private group messages with read receipts) ──────────────────
+async def create_whisper(sender_id, target_id, chat_id, text):
+    """Store a whisper and return its short id (used in the read button)."""
+    wid = uuid.uuid4().hex[:12]
+    await get_db().whispers.insert_one({
+        "_id": wid, "sender_id": sender_id, "target_id": target_id,
+        "chat_id": chat_id, "text": text, "read": False, "created_at": now(),
+    })
+    return wid
+
+
+async def get_whisper(wid):
+    return await get_db().whispers.find_one({"_id": wid})
+
+
+async def mark_whisper_read(wid):
+    await get_db().whispers.update_one({"_id": wid}, {"$set": {"read": True}})
 
 # ── Welcome ───────────────────────────────────────────────────────────
 
