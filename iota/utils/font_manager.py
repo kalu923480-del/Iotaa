@@ -61,24 +61,31 @@ _FONT_URLS = {
     "NotoSans-Bold.ttf": "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoSans-Bold.ttf",
     "NotoSansDevanagari-Regular.ttf": "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoSansDevanagari-Regular.ttf",
     "NotoSansDevanagari-Bold.ttf": "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoSansDevanagari-Bold.ttf",
+    # Color emoji (Pillow only loads the 109px strike of this file, so we
+    # always request it at size 109 and scale the glyphs down ourselves).
+    "NotoColorEmoji.ttf": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf",
 }
 
 # System fallback paths to try if bundled/downloaded fonts aren't
 # available at all — covers common Linux server distros. Devanagari-
 # capable ones listed first so Hindi text doesn't silently fall back to
 # a Latin-only font and show tofu boxes for Hindi script.
-# 💡 Most durable fix of all: `apt install fonts-noto-core` (Debian/
-# Ubuntu) once on your server gives every font below for free, forever,
-# with zero runtime downloads needed.
+# 💡 Most durable fix of all: `apt install fonts-noto-core fonts-noto-color-emoji`
+# (Debian/Ubuntu) once on your server gives every font below for free,
+# forever, with zero runtime downloads needed.
 _SYSTEM_FALLBACKS_DEVANAGARI = [
     "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
     "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansDevanagari-Regular.ttf",
 ]
 _SYSTEM_FALLBACKS = [
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+]
+_SYSTEM_FALLBACKS_EMOJI = [
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/opentype/noto/NotoColorEmoji.ttf",
 ]
 
 _font_cache: dict = {}
@@ -143,3 +150,42 @@ def load_font(name: str, size: int) -> ImageFont.FreeTypeFont | None:
     except Exception as e:
         logger.warning(f"Failed to load font {name} at size {size}: {e}")
         return None
+
+
+def get_emoji_font_path() -> str | None:
+    """Locate the color-emoji font (bundled, system, or downloadable)."""
+    bundled = os.path.join(_FONTS_DIR, "NotoColorEmoji.ttf")
+    if os.path.exists(bundled):
+        return bundled
+    for fb in _SYSTEM_FALLBACKS_EMOJI:
+        if os.path.exists(fb):
+            return fb
+    if _try_download("NotoColorEmoji.ttf"):
+        return bundled
+    return None
+
+
+def load_emoji_font(size: int = 109) -> ImageFont.FreeTypeFont | None:
+    """Load the color-emoji font. Pillow's FreeType backend can only open
+    the NotoColorEmoji.ttf 109px strike, so we always request 109 and
+    scale the individual glyphs down ourselves at draw time."""
+    path = get_emoji_font_path()
+    if not path:
+        return None
+    cache_key = ("emoji", size)
+    if cache_key in _font_cache:
+        return _font_cache[cache_key]
+    try:
+        font = ImageFont.truetype(path, size)
+        _font_cache[cache_key] = font
+        return font
+    except Exception as e:
+        # Fall back to whatever size the font does support if 109 fails.
+        logger.debug(f"emoji font load at {size} failed: {e}")
+        try:
+            font = ImageFont.truetype(path, 64)
+            _font_cache[cache_key] = font
+            return font
+        except Exception as e2:
+            logger.warning(f"emoji font load failed entirely: {e2}")
+            return None

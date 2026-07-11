@@ -7,10 +7,12 @@ Usage:
   /q                 → quote the replied message (WEBP sticker)
   /q 2  /q 3         → quote a short thread (last N messages)
   /q png  /q img     → send as a PNG image instead of a sticker
-  /q dark | light | white | purple | blue   → theme
+  /q dark | light | white | purple | blue | telegram   → theme
   /q color #ff3366   → custom background colour
+  /q border | noborder   → toggle the card outline
+  /q png  /q img     → send as a PNG image instead of a sticker
 
-Flags can be combined, e.g.  /q 3 purple png
+Flags can be combined, e.g.  /q 3 purple png noborder
 """
 import logging
 
@@ -26,7 +28,9 @@ logger = logging.getLogger(__name__)
 MAX_QUOTE_LENGTH = 400      # per-message cap before we refuse
 MAX_THREAD = 10             # hard cap on /q N
 MODES = {"png", "img"}
-THEME_NAMES = {"dark", "light", "white", "purple", "blue"}
+THEME_NAMES = {"dark", "light", "white", "purple", "blue", "telegram"}
+BORDER_ON = {"border"}
+BORDER_OFF = {"noborder"}
 
 
 async def _gather_messages(update, context, reply, count):
@@ -86,6 +90,7 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = "sticker"
     theme = "dark"
     count = 1
+    border = True
     args = list(context.args or [])
     i = 0
     while i < len(args):
@@ -94,6 +99,10 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mode = "png"
         elif a in THEME_NAMES:
             theme = a
+        elif a in BORDER_OFF:
+            border = False
+        elif a in BORDER_ON:
+            border = True
         elif a == "color":
             if i + 1 < len(args):
                 theme = "color " + args[i + 1]
@@ -132,7 +141,16 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if rptext:
             ru = rp.from_user
             rpname = (ru.full_name or ru.first_name or "Someone") if ru else "Someone"
-            reply_preview = {"name": rpname, "text": rptext[:120]}
+            rp_media = bool(rp.photo or rp.video or rp.animation
+                            or rp.sticker or rp.audio or rp.voice or rp.document)
+            reply_preview = {"name": rpname, "text": rptext[:120], "media": rp_media}
+
+    timestamp = None
+    if reply.date:
+        try:
+            timestamp = reply.date.strftime("%H:%M")
+        except Exception:
+            timestamp = None
 
     # ── Avatar ─────────────────────────────────────────────────────────
     sender = reply.from_user
@@ -151,7 +169,7 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         img_bytes = render_quote_card(
             messages, avatar_bytes, theme=theme, mode=mode,
-            reply_preview=reply_preview,
+            reply_preview=reply_preview, timestamp=timestamp, border=border,
         )
     except QuoteRenderError as e:
         await msg.reply_html(safe_html(str(e))); return
