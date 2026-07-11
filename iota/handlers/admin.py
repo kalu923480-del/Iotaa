@@ -483,11 +483,16 @@ def _fmt_err(e):
                 "to grant me the needed right.")
     if "not in the chat" in low or "user not found" in low:
         return "❌ That user isn't in this chat."
+    if "channel" in low:
+        return ("❌ I can't manage admins in this channel. Make sure I'm an "
+                "admin there with the needed rights, or run this in a group.")
     return f"❌ {safe_html(raw)}"
 
 
 async def _promote(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
+    if chat.type == "private":
+        await msg.reply_html("❌ Promote/Demote only works inside a group or supergroup, not in private chat."); return
     is_owner = update.effective_user.id == OWNER_ID
     # ── Parse level (1/2/3) out of the args so ".promote 1" (as a reply)
     #    sets level 1 instead of being misread as target user id 1. ──
@@ -549,13 +554,12 @@ async def _promote(update, context, rest):
     except Exception as e:
         logger.exception("promote failed")
         await msg.reply_html(_fmt_err(e))
-    except Exception as e:
-        logger.warning(f"_promote failed: {e}")
-        await msg.reply_html("❌ " + sc("Couldn't complete promotion. Try again."))
 
 
 async def _demote(update, context, rest):
     msg = update.effective_message; chat = update.effective_chat
+    if chat.type == "private":
+        await msg.reply_html("❌ Promote/Demote only works inside a group or supergroup, not in private chat."); return
     is_owner = update.effective_user.id == OWNER_ID
     uid, uname, _ = await _resolve(update, context, rest)
     if not uid: await msg.reply_html("❌ Specify a user!"); return
@@ -586,9 +590,6 @@ async def _demote(update, context, rest):
     except Exception as e:
         logger.exception("demote failed")
         await msg.reply_html(_fmt_err(e))
-    except Exception as e:
-        logger.warning(f"_demote failed: {e}")
-        await msg.reply_html("❌ " + sc("Couldn't complete demotion. Try again."))
 
 async def _demote_all(update, context):
     """
@@ -600,6 +601,8 @@ async def _demote_all(update, context):
     (Telegram forbids demoting the owner) and Iota herself.
     """
     msg = update.effective_message; chat = update.effective_chat
+    if chat.type == "private":
+        await msg.reply_html("❌ Demote-all only works inside a group or supergroup, not in private chat."); return
     err = await _bot_perm_error(context, chat, "can_promote_members")
     if err: await msg.reply_html(err); return
     try:
