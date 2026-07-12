@@ -81,6 +81,23 @@ class TestGameArtEngine(unittest.TestCase):
         rows = [(i, f"P{i}", i * 100) for i in range(1, 6)]
         self.assertTrue(_is_png(g.render_leaderboard(rows)))
 
+    # ── 7. New renderers: hangman gallows, bomb board, ludo share ──────────
+    def test_new_renderers_produce_png(self):
+        cases = {
+            "hangman": g.render_hangman(3),
+            "hangman_full": g.render_hangman(6),
+            "hangman_clamped": g.render_hangman(99),
+            "bomb": g.render_bomb(defused=False, seconds_left=12,
+                                  wires=["red", "green", "blue", "yellow"]),
+            "bomb_defused": g.render_bomb(defused=True),
+            "ludo_share": g.render_ludo_share([("🔴 Red", "4/4"),
+                                              ("🔵 Blue", "2/4")]),
+        }
+        for name, buf in cases.items():
+            with self.subTest(name):
+                self.assertIsInstance(buf, io.BytesIO)
+                self.assertTrue(_is_png(buf), f"{name} is not a PNG")
+
 
 if __name__ == "__main__":
     unittest.main()

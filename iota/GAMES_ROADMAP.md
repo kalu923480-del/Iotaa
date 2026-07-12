@@ -6,6 +6,12 @@
 > and 0 errors.
 >
 > Audited: 2026-07-11. Repo: `/workspaces/Iota/iota`.
+>
+> **Recently shipped (2026-07-12):** Chess engine + handlers; Connect-4 &
+> UNO net-new games; generic **Tournament** bracket (`/tournament`);
+> **Spectator** system (`/watch`, `/unwatch`); universal **nav_bar** wiring;
+> generic **Mini App skeleton** (`utils/miniapp.py` + `webapp/generic/`) with a
+> **Roulette** Mini App. See Phase 2 / 4 / 5 checkboxes below.
 
 ---
 
@@ -59,6 +65,8 @@ Reuse, extend — never fork.
 - [ ] Unit tests with sample PNGs (deterministic seed) → guards 0-bug goal.
 
 ### PHASE 2 — Unified Games Hub + consistent inline shell
+- [x] Connect-4 & UNO lobbies + Progress commands (achievements/daily/stats/
+      leaders) now carry a consistent `nav_bar` (Home) via `game_ui.py`. ✅
 - [ ] One `games_hub` menu (already exists in `handlers/games.py`) gets a
       consistent `nav_bar` (Home / Back / Refresh) via `game_ui.py`.
 - [ ] Standardize lobby→play→result→rematch flow across card/bet/bomb/roulette/
@@ -74,18 +82,23 @@ Reuse, extend — never fork.
 - [ ] Ludo already visual (Mini App) — add PNG share-image of final board.
 
 ### PHASE 4 — Mini App shell for 2–3 more games
-- [ ] Extract a generic Mini App skeleton from `webapp/ludo` (auth via Telegram
-      `initData`, aiohttp + WebSocket, shared CSS tokens).
-- [ ] Port `/roulette` (live wheel) and `/card` (live table) to Mini Apps —
-      these benefit most from real-time animation.
-- [ ] Keep chat/inline fallback when `WEBAPP_BASE_URL` is unset (like Ludo).
+- [x] Extract a generic Mini App skeleton from `webapp/ludo` → `utils/miniapp.py`
+      (auth via Telegram `initData` HMAC, `make_app()` factory, `run_server()`
+      runner) + `webapp/generic/` reference shell. ✅
+- [x] Port `/roulette` (live wheel) onto the skeleton → `webapp/roulette/`
+      (frontend + `roulette_server.py`, server-authoritative spin, optional
+      launch behind `ROULETTE_MINIAPP` env). ✅
+- [x] Keep chat/inline fallback when `WEBAPP_BASE_URL` is unset (like Ludo). ✅
 
 ### PHASE 5 — New systems (the "future" layer)
 - [ ] **Achievements** — first-win, streak, high-roller badges (PNG medal art).
 - [ ] **Daily challenge** — one rotating game objective with reward.
-- [ ] **Tournaments** — bracket of N players, auto-schedule via job queue.
+- [x] **Tournaments** — single-elimination bracket of N players via
+      `/tournament` (join → begin → report winners round-by-round → champion).
+      Pure logic in `utils/tournament.py`, unit-tested. ✅
 - [ ] **Global leaderboard** — cross-group ranks (`/leaders` already exists; extend).
-- [ ] **Spectator / replay** — reuse Ludo spectator pattern.
+- [x] **Spectator / replay** — `/watch` & `/unwatch` for live Connect-4 / UNO;
+      watchers get DM board updates via `utils/spectator.py`. ✅ (chat games)
 - [ ] **Stats profile** — per-user win/loss, favorite game (PNG infographic).
 
 ### PHASE 6 — Hardening (0 bugs / 0 errors)
@@ -117,6 +130,11 @@ Reuse, extend — never fork.
 | werewolf | ✅ | ⬜ | ⬜ | ⬜ |
 | ludo (chat) | ✅ | ⬜ | ⬜ | ⬜ |
 | ludo (mini) | ✅ | ✅ | ✅ | ⬜ |
+| connect4 | ✅ | ⬜ | ✅ (nav) | ⬜ |
+| uno | ✅ | ⬜ | ✅ (nav) | ⬜ |
+| chess | ✅ | ⬜ | ⬜ | ✅ |
+| tournament | ✅ | ⬜ | ⬜ | ✅ (logic) |
+| roulette (mini) | ✅ | ⬜ | ✅ (nav) | ⬜ |
 
 ---
 

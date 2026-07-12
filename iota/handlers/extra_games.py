@@ -24,6 +24,7 @@ from utils.mongo_db import ensure_user, get_user, update_user, add_balance
 from utils.helpers import mention, fmt
 from utils.ai_provider import call_ai
 from utils.system_gate import games_gate
+from utils.game_art import send_game_art as _send_art, render_hangman as _render_hangman
 from config import SARVAM_API_KEY, SARVAM_CHAT_URL
 
 logger = logging.getLogger(__name__)
@@ -245,6 +246,9 @@ async def hangman_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_html(
                 f"🎉 {mention(u)} guessed: <b>{word}</b>!\n💰 +{fmt(game['reward'])}"
             )
+            await _send_art(context, chat.id,
+                           lambda: _render_hangman(0),
+                           caption="🎭 ʜᴀɴɢᴍᴀɴ — sᴏʟᴠᴇᴅ!")
         else:
             await update.message.reply_html(
                 f"✅ '{text}' found!\n<code>{masked}</code>\n"
@@ -259,6 +263,9 @@ async def hangman_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_html(
                 f"{stage} Game Over! Word was: <b>{word}</b>"
             )
+            await _send_art(context, chat.id,
+                           lambda: _render_hangman(6),
+                           caption="💀 ʜᴀɴɢᴍᴀɴ — ɢᴀᴍᴇ ᴏᴠᴇʀ")
         else:
             lives_left = game["max_wrong"] - game["wrong"]
             await update.message.reply_html(
@@ -266,6 +273,9 @@ async def hangman_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"<code>{masked}</code>\n"
                 f"Lives: {'❤️' * lives_left}  |  Wrong: {game['wrong']}/{game['max_wrong']}"
             )
+            await _send_art(context, chat.id,
+                           lambda: _render_hangman(game["wrong"]),
+                           caption=f"🎭 ʜᴀɴɢᴍᴀɴ — {game['wrong']}/6")
 
 
 # ═══════════════════════════════════════════════════════════════════════

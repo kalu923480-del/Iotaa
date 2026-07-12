@@ -40,6 +40,7 @@ from utils.helpers import mention, fmt
 from utils.system_gate import games_gate
 from utils.fonts import sc_all
 from utils.game_ui import send_gif_result
+from utils.game_art import send_game_art as _send_art, render_wheel as _render_wheel
 
 logger = logging.getLogger(__name__)
 
@@ -125,3 +126,7 @@ async def wheel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     mood = "jackpot" if label.startswith("🏆") else "wheel"
     await send_gif_result(context, msg.chat_id, mood, wheel_text)
+    segments = [s[0] for s in _SEGMENTS]
+    await _send_art(context, msg.chat_id,
+                   lambda: _render_wheel(segments, winner=idx),
+                   caption="🎡 ɪᴏᴛᴀ ᴡʜᴇᴇʟ")

@@ -98,3 +98,64 @@ def back_button(callback_data: str = "gh_home") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("« ʙᴀᴄᴋ", callback_data=callback_data)
     ]])
+
+
+def nav_bar(home: str = "gh_home", back: str = None,
+            refresh: str = None) -> InlineKeyboardMarkup:
+    """One consistent in-game navigation row: Home / Back / Refresh.
+
+    Used by every mini-game so the whole catalogue feels like one product
+    (see GAMES_ROADMAP.md Phase 2). Buttons are omitted when their
+    callback is None so callers can build a minimal bar easily.
+    """
+    row = [InlineKeyboardButton("🏠 ʜᴏᴍᴇ", callback_data=home)]
+    if back:
+        row.append(InlineKeyboardButton("« ʙᴀᴄᴋ", callback_data=back))
+    if refresh:
+        row.append(InlineKeyboardButton("🔄 ʀᴇғʀᴇsʜ", callback_data=refresh))
+    return InlineKeyboardMarkup([row])
+
+
+def chip(label: str, value: str = "", emoji: str = "🎯") -> str:
+    """A compact key/value chip used in result cards and lobbies."""
+    if value:
+        return f"{emoji} <b>{label}:</b> {value}"
+    return f"{emoji} <b>{label}</b>"
+
+
+def scoreboard(rows: list, title: str = "🏆 sᴄᴏʀᴇʙᴏᴀʀᴅ") -> str:
+    """Text scoreboard (complement to game_art.render_scoreboard PNG).
+
+    `rows` = list of (name, score). Renders a tidy, monospace-aligned
+    table that degrades gracefully when art can't be sent.
+    """
+    if not rows:
+        return f"{title}\n{_DIVIDER}\n⚠️ ɴᴏ sᴄᴏʀᴇs ʏᴇᴛ."
+    lines = [title, _DIVIDER]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (name, score) in enumerate(rows[:12]):
+        badge = medals[i] if i < 3 else f"{i + 1}."
+        lines.append(f"{badge} {name} — {score}")
+    return "\n".join(lines)
+
+
+def card_face(rank: str, suit: str = "spades", hidden: bool = False):
+    """Convenience wrapper → game_art.render_card (returns PNG BytesIO)."""
+    from utils import game_art
+    return game_art.render_card(rank, suit, hidden)
+
+
+def dice_face(value: int):
+    """Convenience wrapper → game_art.render_dice (returns PNG BytesIO)."""
+    from utils import game_art
+    return game_art.render_dice(value)
+
+
+def board_thumb(title: str = "ʙᴏᴀʀᴅ", lines: list = None) -> str:
+    """Text fallback 'board thumbnail' for games that don't yet have a
+    dedicated PNG renderer (e.g. connect-four). Used inside result cards
+    so every game has a consistent visual anchor."""
+    out = [f"🎲 {title}", _DIVIDER]
+    if lines:
+        out.extend(lines[:10])
+    return "\n".join(out)

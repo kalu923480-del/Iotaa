@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Iota Roulette</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { --stage:#0f1220; --panel:#171b2e; --text:#f0ece0; --dim:#9aa0bd; --amber:#ffb648; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--stage); color:var(--text);
+      font-family:-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+      min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px; }
+    .panel { background:var(--panel); border:1px solid #2a2f4a; border-radius:16px;
+      padding:20px; width:100%; max-width:420px; text-align:center; }
+    h1 { margin:0 0 4px; font-size:20px; }
+    .sub { color:var(--dim); font-size:13px; margin-bottom:16px; }
+    #wheel { width:240px; height:240px; margin:0 auto 16px; border-radius:50%;
+      background:conic-gradient(#b22222 0 9.7%, #0b0b0b 9.7% 19.4%, #b22222 19.4% 29.1%,
+      #0b0b0b 29.1% 38.7%, #b22222 38.7% 48.4%, #0b0b0b 48.4% 58.1%,
+      #b22222 58.1% 67.7%, #0b0b0b 67.7% 77.4%, #1f8f4f 77.4% 87.1%, #0b0b0b 87.1% 96.8%);
+      position:relative; transition: transform 3s cubic-bezier(.17,.67,.32,1); }
+    #pointer { width:0; height:0; border-left:12px solid transparent;
+      border-right:12px solid transparent; border-top:20px solid var(--amber);
+      margin:-8px auto 0; }
+    button { width:100%; padding:12px; border:0; border-radius:12px; background:var(--amber);
+      color:#1a1205; font-weight:700; font-size:15px; cursor:pointer; margin-top:8px; }
+    .out { margin-top:14px; font-size:15px; min-height:22px; }
+    .pocket { font-size:34px; font-weight:800; color:var(--amber); }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>🎰 Iota Roulette</h1>
+    <div class="sub">Live wheel — spin, then send the result to your group.</div>
+    <div id="wheel"></div>
+    <div id="pointer"></div>
+    <div class="out" id="out">Tap <b>Spin</b> to play.</div>
+    <button id="spin">🎰 Spin</button>
+    <button id="send" style="display:none">📨 Send result to chat</button>
+  </div>
+  <script>
+    const tg = window.Telegram.WebApp; tg.ready();
+    let last = null;
+    const wheel = document.getElementById('wheel');
+    const out = document.getElementById('out');
+    const sendBtn = document.getElementById('send');
+    document.getElementById('spin').onclick = async () => {
+      out.textContent = 'Spinning…'; sendBtn.style.display = 'none';
+      try {
+        const r = await fetch('/api/roulette/spin', {
+          method:'POST', headers:{'X-Telegram-Init-Data': tg.initData},
+          body: JSON.stringify({})
+        });
+        if (!r.ok) { out.textContent = 'Auth failed — open from Telegram.'; return; }
+        const data = await r.json();
+        last = data;
+        const deg = 360 * 5 + (360 - (data.pocket / 37 * 360));
+        wheel.style.transform = 'rotate(' + deg + 'deg)';
+        setTimeout(() => {
+          out.innerHTML = 'Result: <span class="pocket">' + data.pocket +
+            '</span> <b>' + data.color + '</b>';
+          sendBtn.style.display = 'block';
+        }, 3000);
+      } catch (e) { out.textContent = 'Network error.'; }
+    };
+    sendBtn.onclick = () => {
+      if (last && tg.sendData) tg.sendData(JSON.stringify({type:'roulette', ...last}));
+    };
+  </script>
+</body>
+</html>

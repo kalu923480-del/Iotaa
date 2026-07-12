@@ -43,6 +43,7 @@ from utils.helpers import mention, fmt
 from utils.safe_html import safe_html
 from utils.system_gate import games_gate
 from utils.game_ui import send_gif_result
+from utils.game_art import send_game_art as _send_art, render_slots as _render_slots
 
 logger = logging.getLogger(__name__)
 
@@ -127,5 +128,12 @@ async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result_text = (
         f"{mention(u)}\n\n{result_text}\n\n💼 Balance: {fmt(new_balance)}"
     )
+    try:
+        from utils.progress import record_game_result
+        await record_game_result(u.id, won=(multiplier >= 1), bet=bet, game="slots")
+    except Exception:
+        pass
     mood = "slot_win" if multiplier >= 4 else ("win" if multiplier >= 1 else "lose")
     await send_gif_result(context, msg.chat_id, mood, result_text)
+    await _send_art(context, msg.chat_id, lambda: _render_slots(list(reels)),
+                   caption="🎰 ʀᴇᴇʟ ʀᴇsᴜʟᴛ")

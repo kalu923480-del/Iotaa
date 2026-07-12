@@ -23,6 +23,7 @@ from utils.helpers import mention, fmt
 from utils.safe_html import safe_html
 from utils.fonts import sc
 from utils.system_gate import games_gate
+from utils.game_art import send_game_art as _send_art, render_ludo_share as _render_ludo_share
 
 logger = logging.getLogger(__name__)
 
@@ -718,6 +719,10 @@ async def _end_game(q, context, gid: str, winner_p: dict):
         f"🎮 Phir khelne ke liye: /ludo"
     )
 
+    share_rows = [
+        (f"{COLORS[p['color']]['emoji']} {p['name']}", f"{p['pieces'].count(WINNING_POS)}/4")
+        for p in by_home
+    ]
     try:
         await context.bot.send_animation(
             game["chat_id"],
@@ -727,6 +732,9 @@ async def _end_game(q, context, gid: str, winner_p: dict):
         )
     except Exception:
         await context.bot.send_message(game["chat_id"], result, parse_mode="HTML")
+    await _send_art(context, game["chat_id"],
+                   lambda: _render_ludo_share(share_rows),
+                   caption="🏆 ʟᴜᴅᴏ — ғɪɴᴀʟ ʙᴏᴀʀᴅ")
 
     await _safe_edit(q, f"🏆 {winner_p['name']} JEET GAYE! Details upar dekho.")
 

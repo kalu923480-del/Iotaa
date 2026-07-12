@@ -410,6 +410,70 @@ def render_leaderboard(rows: list, title: str = "📊 Leaderboard") -> io.BytesI
     return _finalize(img)
 
 
+def render_hangman(stage: int = 0) -> io.BytesIO:
+    """Stick-figure gallows for /hangman. `stage` 0..6 draws progressively
+    (base, post, beam, rope, head, body, limbs)."""
+    stage = max(0, min(6, int(stage)))
+    w, h = 300, 360
+    img = _new_canvas(w, h)
+    d = ImageDraw.Draw(img)
+    line_w = 10
+    # Base + upright post + top beam (always drawn)
+    d.line((40, h - 20, w - 40, h - 20), fill=PANEL_2, width=line_w)
+    d.line((70, h - 20, 70, 30), fill=PANEL_2, width=line_w)
+    d.line((70, 30, 200, 30), fill=PANEL_2, width=line_w)
+    d.line((200, 30, 200, 70), fill=PANEL_2, width=line_w)  # rope
+    cx, cy = 200, 110
+    r = 26
+    if stage >= 1:  # head
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=AMBER, width=6)
+    if stage >= 2:  # body
+        d.line((cx, cy + r, cx, cy + r + 80), fill=AMBER, width=6)
+    if stage >= 3:  # left arm
+        d.line((cx, cy + r + 20, cx - 45, cy + r + 55), fill=AMBER, width=6)
+    if stage >= 4:  # right arm
+        d.line((cx, cy + r + 20, cx + 45, cy + r + 55), fill=AMBER, width=6)
+    if stage >= 5:  # left leg
+        d.line((cx, cy + r + 80, cx - 40, cy + r + 130), fill=AMBER, width=6)
+    if stage >= 6:  # right leg
+        d.line((cx, cy + r + 80, cx + 40, cy + r + 130), fill=AMBER, width=6)
+    _draw_line_centered(img, w // 2, 20, f"ʜᴀɴɢᴍᴀɴ — {stage}/6", 22, AMBER, bold=True)
+    return _finalize(img)
+
+
+def render_bomb(defused: bool = False, seconds_left: int = 0,
+                 wires: list = None) -> io.BytesIO:
+    """Defuse board for /bomb. Shows a bomb, a countdown, and colour wires
+    (green=cut safe, red=still live)."""
+    w, h = 360, 320
+    img = _new_canvas(w, h)
+    d = ImageDraw.Draw(img)
+    col = GREEN if defused else RED
+    _rounded_rect(d, (20, 20, w - 20, h - 20), 18, fill=PANEL,
+                  outline=AMBER_DIM, width=3)
+    # bomb body
+    d.ellipse((120, 120, 240, 240), fill=PANEL_2, outline=col, width=6)
+    d.rectangle((168, 80, 192, 120), fill=PANEL_2, outline=col, width=4)
+    d.line((180, 80, 200, 60), fill=AMBER, width=5)  # fuse
+    _draw_line_centered(img, 180, 56, "🔥", 26, AMBER)
+    _draw_line_centered(img, w // 2, 48,
+                        "✅ sᴀғᴇ" if defused else f"⏳ {seconds_left}s",
+                        26, col, bold=True)
+    wires = wires or ["red", "green", "blue", "yellow"]
+    y = 270
+    for i, c in enumerate(wires):
+        wc = {"red": RED, "green": GREEN, "blue": (90, 160, 255),
+              "yellow": GOLD}.get(c, TEXT)
+        x = 60 + i * 80
+        d.line((x, 250, x, y), fill=wc, width=8)
+    return _finalize(img)
+
+
+def render_ludo_share(rows: list, title: str = "🎲 ʟᴜᴅᴏ") -> io.BytesIO:
+    """Final-board share image for /ludo — a tidy scoreboard PNG."""
+    return render_scoreboard(rows, title)
+
+
 # tiny trig helpers (avoid importing math just for two calls readability)
 def _cos(a):
     import math

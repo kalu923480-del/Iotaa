@@ -210,14 +210,15 @@ class TestWhisperReadCallback(unittest.IsolatedAsyncioTestCase):
 
     def _q(self, data, uid=42):
         q = MagicMock()
-        q.data = data
+        from utils.callback_codec import encode_callback
+        q.data = data if data.startswith("wsp:") else encode_callback("wsp", {"w": data})
         q.from_user = _user(uid, "Reader")
         q.answer = AsyncMock()
         q.edit_message_reply_markup = AsyncMock()
         return q
 
     async def test_read_unknown_whisper(self):
-        q = self._q("wsp_read_nope")
+        q = self._q("nope")
         up = MagicMock(); up.callback_query = q; up.effective_user = q.from_user
         ctx = MagicMock(); ctx.bot = MagicMock()
         ctx.bot.send_message = AsyncMock()
@@ -229,7 +230,7 @@ class TestWhisperReadCallback(unittest.IsolatedAsyncioTestCase):
         w = {"target_id": 99, "text": "secret", "chat_id": -100,
              "sender_id": 5, "read": False}
         self.whisper.get_whisper.return_value = w
-        q = self._q("wsp_read_abc", uid=42)
+        q = self._q("abc", uid=42)
         up = MagicMock(); up.callback_query = q; up.effective_user = q.from_user
         ctx = MagicMock(); ctx.bot = MagicMock(); ctx.bot.send_message = AsyncMock()
         await self.whisper.whisper_read_callback(up, ctx)
@@ -241,7 +242,7 @@ class TestWhisperReadCallback(unittest.IsolatedAsyncioTestCase):
         w = {"target_id": 42, "text": "secret", "chat_id": -100,
              "sender_id": 5, "read": False}
         self.whisper.get_whisper.return_value = w
-        q = self._q("wsp_read_abc", uid=42)
+        q = self._q("abc", uid=42)
         up = MagicMock(); up.callback_query = q; up.effective_user = q.from_user
         ctx = MagicMock(); ctx.bot = MagicMock(); ctx.bot.send_message = AsyncMock()
         await self.whisper.whisper_read_callback(up, ctx)

@@ -283,6 +283,23 @@ def main():
         aijoke_cmd, advice_cmd, roastme_cmd, aistory_cmd,
     )
 
+    # ── 🆕 Net-new systems & commands (missing features) ───────────────
+    from handlers.progress import (
+        achievements_cmd, dailyquest_cmd, claimquest_callback,
+        stats_cmd, gleaders_cmd,
+    )
+    from handlers.extras2 import (
+        weather_cmd, currency_cmd, wiki_cmd, define_cmd, short_cmd,
+        time_cmd, sticky_cmd, feedback_cmd, schedule_cmd, rss_cmd,
+        repin_sticky_handler, rehydrate_schedules, rss_check_loop,
+    )
+    from handlers.connect_four import connect4_cmd, connect4_callback
+    from handlers.inline_query import inline_query_handler
+    from handlers.uno import uno_cmd, uno_callback
+    from handlers.chess import chess_cmd, chess_callback, chess_move_handler
+    from handlers.tournament import tournament_cmd, tournament_callback
+    from handlers.spectator import watch_cmd, unwatch_cmd
+
     # ── Banking system (canonical module) ────────────────────────────
     from handlers.banking import (
         bank_cmd, deposit_cmd, withdraw_cmd, loan_cmd, repay_cmd,
@@ -389,6 +406,23 @@ def main():
     for c, f in [
         ("aijoke", aijoke_cmd), ("advice", advice_cmd),
         ("roastme", roastme_cmd), ("aistory", aistory_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── 🆕 Net-new: progress / info / games (missing features) ──────────
+    for c, f in [
+        ("achievements", achievements_cmd), ("dailyquest", dailyquest_cmd),
+        ("stats", stats_cmd), ("gleaders", gleaders_cmd),
+        ("weather", weather_cmd), ("currency", currency_cmd),
+        ("wiki", wiki_cmd), ("define", define_cmd), ("short", short_cmd),
+        ("time", time_cmd), ("sticky", sticky_cmd), ("feedback", feedback_cmd),
+        ("schedule", schedule_cmd), ("rss", rss_cmd),
+        ("connect4", connect4_cmd),
+        ("uno", uno_cmd),
+        ("chess", chess_cmd),
+        ("tournament", tournament_cmd),
+        ("watch", watch_cmd),
+        ("unwatch", unwatch_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 
@@ -700,6 +734,15 @@ def main():
     app.add_handler(CallbackQueryHandler(riddle_reveal_callback, pattern=r"^riddle_ans:"))
     app.add_handler(CallbackQueryHandler(giveaway_join_callback, pattern=r"^ga_join:"))
     app.add_handler(CallbackQueryHandler(join_request_callback, pattern=r"^jr_"))
+    app.add_handler(CallbackQueryHandler(claimquest_callback, pattern=r"^pq_"))
+    app.add_handler(CallbackQueryHandler(connect4_callback,  pattern=r"^cf_"))
+    app.add_handler(CallbackQueryHandler(uno_callback,      pattern=r"^uno_"))
+    app.add_handler(CallbackQueryHandler(chess_callback,    pattern=r"^ch_"))
+    app.add_handler(CallbackQueryHandler(tournament_callback, pattern=r"^tour_"))
+
+    # ── Inline queries (net-new) ────────────────────────────────────────
+    from telegram.ext import InlineQueryHandler
+    app.add_handler(InlineQueryHandler(inline_query_handler))
 
     # ── Payments ──────────────────────────────────────────────────────
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
@@ -737,6 +780,10 @@ def main():
     app.add_handler(MessageHandler(
         filters.StatusUpdate.PINNED_MESSAGE, channel_pin_handler
     ))
+    # 🆕 Sticky: re-pin the group's sticky notice whenever something else is pinned
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.PINNED_MESSAGE, repin_sticky_handler
+    ), group=13)
 
     # ── Global identity tracker (runs first, on EVERY update) ─────────
     # 🔴 ROOT-CAUSE FIX for /detail showing incomplete history:
@@ -943,6 +990,12 @@ def main():
         wordgame_letter_handler
     ), group=10)
 
+    # 9b. 🆕 Chess move (reply with algebraic notation, e.g. e2e4)
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND,
+        chess_move_handler
+    ), group=18)
+
     # 10. Valentine form (DM)
     app.add_handler(MessageHandler(
         filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
@@ -1038,6 +1091,15 @@ def main():
         # that would otherwise kill the long-poll bot too).
         asyncio.create_task(_render_keepalive_job())
 
+        # ── 🆕 Net-new system jobs ──────────────────────────────────────
+        # Enforce Telegram's 64-byte callback_data limit across ALL handlers.
+        from utils.callback_codec import install_callback_guard
+        install_callback_guard()
+        # Re-create pending /schedule jobs lost on restart.
+        await rehydrate_schedules(application)
+        # Periodic RSS feed checker (posts new items to subscribed chats).
+        asyncio.create_task(rss_check_loop(application))
+
         # 🎲 Sweep abandoned game lobbies so in-memory state can't leak.
         from utils.game_lobby import lobby_expiry_job
         asyncio.create_task(lobby_expiry_job(application.bot))
@@ -1053,6 +1115,16 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ Ludo Mini App server failed to start: {e}. "
                             f"/ludo will still work in classic chat mode.")
+
+        # 🎰 Optional Roulette Mini App — only starts when explicitly enabled
+        # (ROULETTE_MINIAPP=1) AND a public WEBAPP_BASE_URL is configured.
+        # Fully optional: the in-chat /roulette stays the canonical version.
+        if os.environ.get("ROULETTE_MINIAPP") and WEBAPP_BASE_URL:
+            try:
+                from webapp.roulette_server import run_roulette_server
+                asyncio.create_task(run_roulette_server(port=WEBAPP_PORT + 11))
+            except Exception as e:
+                logger.warning(f"⚠️ Roulette Mini App server failed to start: {e}.")
 
         logger.info(f"🤖 Iota Bot LIVE! Owner: {OWNER_USERNAME} (ID: {OWNER_ID})")
 

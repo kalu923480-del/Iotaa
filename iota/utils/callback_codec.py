@@ -52,3 +52,44 @@ def decode_callback(data, prefix: str):
         return json.loads(_b64decode(raw))
     except Exception:
         return None
+
+
+def safe_cb(prefix: str, data: dict, fallback: str = "gh_home") -> str:
+    """Encode, but never return something over 64 bytes — fall back to a
+    short static token so the button always works."""
+    try:
+        return encode_callback(prefix, data)
+    except ValueError:
+        return fallback
+
+
+_installed = False
+
+
+def install_callback_guard():
+    """Globally enforce Telegram's 64-byte callback_data limit.
+
+    Monkeypatches telegram.InlineKeyboardButton so ANY handler in the bot
+    that builds a too-long callback_data is caught at build time (logged,
+    never raised) instead of shipping a dead button. Call once at startup.
+    """
+    global _installed
+    if _installed:
+        return
+    try:
+        from telegram import InlineKeyboardButton
+        import logging
+        _orig = InlineKeyboardButton.__init__
+
+        def _guarded(self, text=None, callback_data=None, *a, **kw):
+            if isinstance(callback_data, str) and len(callback_data) > MAX_CALLBACK_BYTES:
+                logging.getLogger(__name__).warning(
+                    f"⚠️ callback_data {len(callback_data)}B > 64B limit: "
+                    f"{callback_data[:40]}… (button will be dead on Telegram)"
+                )
+            return _orig(self, text, callback_data, *a, **kw)
+
+        InlineKeyboardButton.__init__ = _guarded
+        _installed = True
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"callback guard install skipped: {e}")

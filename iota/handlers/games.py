@@ -23,6 +23,7 @@ from utils.fonts import sc, sc_all
 from utils.gif_provider import get_gif_for_mood
 from utils.safe_html import placeholder
 from utils.system_gate import games_gate
+from utils.game_art import send_game_art as _send_art, render_dice_row as _render_dice_row, render_bomb
 from config import (CARD_FEE_PERCENT, CARD_XP_WIN, CARD_XP_LOSS, ITEMS,
                      CARD_MIN_BET, CARD_MAX_BET, CARD_LOBBY_TIMEOUT_SECONDS)
 
@@ -870,6 +871,13 @@ async def _end_game(q, context, gid, p1_name, p2_name, p1c, p1v, p2c, p2v, rw_te
         f"👉 Pʟᴀʏ Aɢᴀɪɴ Uꜱɪɴɢ : /card {bet if bet else ''}"
     )
 
+    try:
+        from utils.progress import record_game_result
+        await record_game_result(winner_id, won=True, bet=bet, game="card")
+        await record_game_result(loser_id, won=False, bet=bet, game="card")
+    except Exception:
+        pass
+
     await _announce_final_winner(context, game["chat_id"], winner_id, result_text)
 
 
@@ -975,6 +983,10 @@ async def _bomb_explode(context, gid, chat_id):
         logger.debug(f"Suppressed error in games.py: {e}")
         hname = str(game["holder"])
     try:
+        await _send_art(context, chat_id,
+                       lambda: render_bomb(defused=False, seconds_left=0,
+                                           wires=["red", "green", "blue", "yellow"]),
+                       caption="💥 ʙᴏᴍʙ ᴅᴇғᴜsᴇ ʙᴏᴀʀᴅ")
         await context.bot.send_message(
             chat_id,
             f"💥 <b>BOOM!</b>\n💀 <b>{hname}</b> got blown up! Everyone else survives! 🎉",
@@ -1092,6 +1104,13 @@ async def dice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{sc('You')}: {_DICE_FACES[p]}   {sc('Iota')}: {_DICE_FACES[b]}\n"
             f"🏆 {sc('You Win')}!  💰 +{fmt(winnings)}"
         )
+        try:
+            from utils.progress import record_game_result
+            await record_game_result(u.id, won=True, bet=amount, game="dice")
+        except Exception:
+            pass
+        await _send_art(context, chat.id, lambda: _render_dice_row([p, b]),
+                        caption="🎲 ʀᴏʟʟ ʀᴇsᴜʟᴛ")
     elif p == b:
         await add_balance(u.id, amount)
         await update.message.reply_html(
@@ -1099,9 +1118,13 @@ async def dice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{sc('You')}: {_DICE_FACES[p]}   {sc('Iota')}: {_DICE_FACES[b]}\n"
             f"🤝 {sc('Tie')}! {sc('Bet returned')} {fmt(amount)}"
         )
+        await _send_art(context, chat.id, lambda: _render_dice_row([p, b]),
+                        caption="🎲 ʀᴏʟʟ ʀᴇsᴜʟᴛ")
     else:
         await update.message.reply_html(
             f"🎲 {mention(u)}\n"
             f"{sc('You')}: {_DICE_FACES[p]}   {sc('Iota')}: {_DICE_FACES[b]}\n"
             f"💀 {sc('You Lose')}!  💰 -{fmt(amount)}"
         )
+        await _send_art(context, chat.id, lambda: _render_dice_row([p, b]),
+                        caption="🎲 ʀᴏʟʟ ʀᴇsᴜʟᴛ")

@@ -45,6 +45,7 @@ from utils.helpers import mention, mention_id, fmt
 from utils.system_gate import games_gate
 from utils.fonts import sc_all
 from utils.game_ui import send_gif_result
+from utils.game_art import send_game_art as _send_art, render_roulette as _render_roulette
 
 logger = logging.getLogger(__name__)
 
@@ -413,4 +414,8 @@ async def _finish(context: ContextTypes.DEFAULT_TYPE, cid: int):
             f"Mubarak ho! 💙"
         ),
     )
+    import random as _rnd
+    await _send_art(context, cid,
+                   lambda: _render_roulette(_rnd.randint(0, 36)),
+                   caption="🎰 ɪᴏᴛᴀ ʀᴏᴜʟᴇᴛᴛᴇ")
     _GAMES.pop(cid, None)
