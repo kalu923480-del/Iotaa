@@ -12,8 +12,8 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
-from utils.mongo_db import ensure_user, add_balance, get_user, fmt
-from utils.helpers import mention
+from utils.mongo_db import ensure_user, add_balance, get_user
+from utils.helpers import mention, fmt
 from utils.fonts import sc
 from utils.game_art import send_game_art as _send_art, render_leaderboard as _render_leaderboard
 from utils.game_ui import nav_bar
