@@ -87,7 +87,13 @@ def install_callback_guard():
                     f"⚠️ callback_data {len(callback_data)}B > 64B limit: "
                     f"{callback_data[:40]}… (button will be dead on Telegram)"
                 )
-            return _orig(self, text, callback_data, *a, **kw)
+            # IMPORTANT: pass callback_data as a KEYWORD. PTB's
+            # InlineKeyboardButton.__init__(self, text, url=None,
+            # callback_data=None, ...) has `url` as the 2nd positional param —
+            # passing `callback_data` positionally would assign it to `url`,
+            # turning every callback button into a (dead) URL button
+            # ("wrong http url" BadRequest) across the WHOLE bot.
+            return _orig(self, text, *a, callback_data=callback_data, **kw)
 
         InlineKeyboardButton.__init__ = _guarded
         _installed = True
