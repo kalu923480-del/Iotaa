@@ -1247,7 +1247,11 @@ def main():
     # lock). The instance that legitimately owns the lock keeps polling;
     # the other waits, so the bot stays up and self-heals once the stray
     # instance is gone. Only a clean stop exits the loop.
-    from telegram.error import Conflict, TerminatedByOtherGetUpdates
+    try:
+        from telegram.error import Conflict, TerminatedByOtherGetUpdates
+    except ImportError:  # older PTB (e.g. 21.3) only exports base Conflict
+        from telegram.error import Conflict
+        TerminatedByOtherGetUpdates = Conflict
     while True:
         try:
             app.run_polling(drop_pending_updates=True)
