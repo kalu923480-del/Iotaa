@@ -20,7 +20,17 @@ import logging
 import traceback
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.error import Conflict, TerminatedByOtherGetUpdates
+from telegram.error import Conflict
+
+# `TerminatedByOtherGetUpdates` is the specific subclass raised for the
+# "Terminated by other getUpdates request" Conflict, but it only exists in
+# newer python-telegram-bot releases. On older pinned versions (e.g. 21.3)
+# only the base `Conflict` is exported, so alias it to avoid an ImportError
+# that would hard-crash the whole bot at import time.
+try:
+    from telegram.error import TerminatedByOtherGetUpdates
+except ImportError:  # pragma: no cover - depends on PTB version
+    TerminatedByOtherGetUpdates = Conflict
 
 logger = logging.getLogger(__name__)
 
