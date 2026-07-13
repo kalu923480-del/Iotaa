@@ -125,6 +125,14 @@ _tts_config = {
     "sample_rate": DEFAULT_SAMPLE_RATE,
 }
 
+# Most recent failure reason, surfaced to the user so "TTS failed" is never
+# a dead end (the owner can see *why* without digging through server logs).
+_last_tts_error: str = ""
+
+
+def get_last_tts_error() -> str:
+    return _last_tts_error
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Voice catalogue
@@ -492,8 +500,10 @@ async def text_to_speech(text: str, lang: str = "hi-IN",
     """
     if not text or not text.strip():
         return None
+    global _last_tts_error
     if not SARVAM_API_KEY:
         logger.warning("text_to_speech called but SARVAM_API_KEY is empty.")
+        _last_tts_error = "SARVAM_API_KEY is not set — add it to your deploy env."
         return None
 
     cfg = get_tts_config()
@@ -530,12 +540,15 @@ async def text_to_speech(text: str, lang: str = "hi-IN",
                     if audios:
                         return base64.b64decode(audios[0])
                     logger.warning("Sarvam TTS returned 200 but no audio array.")
+                    _last_tts_error = "Sarvam returned HTTP 200 but no audio (empty `audios`)."
                     return None
                 err = await r.text()
                 logger.warning(f"Sarvam TTS failed ({r.status}): {err[:200]}")
+                _last_tts_error = f"Sarvam API HTTP {r.status}: {err[:180]}"
                 return None
     except Exception as e:
         logger.warning(f"Sarvam TTS request error: {e}")
+        _last_tts_error = f"Request error: {type(e).__name__}: {e}"
         return None
 
 

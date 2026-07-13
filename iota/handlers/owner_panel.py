@@ -1510,7 +1510,12 @@ async def previewtts_cmd(update, context):
     thinking = await update.message.reply_html("🔊 Generating preview...")
     audio = await text_to_speech(text[:2500])
     if not audio:
-        await thinking.edit_text("❌ TTS generation failed — check the bot's logs for details."); return
+        from utils.tts_engine import get_last_tts_error
+        reason = get_last_tts_error()
+        msg = "❌ TTS generation failed — check the bot's logs for details."
+        if reason:
+            msg = f"❌ TTS generation failed:\n<code>{safe_html(reason)}</code>"
+        await thinking.edit_text(msg, parse_mode="HTML"); return
     import io
     af = io.BytesIO(audio); af.name = "preview.wav"
     await thinking.delete()

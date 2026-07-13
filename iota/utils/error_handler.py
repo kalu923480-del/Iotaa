@@ -20,6 +20,7 @@ import logging
 import traceback
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.error import Conflict, TerminatedByOtherGetUpdates
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,21 @@ def _command_name(update: object) -> str:
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Registered via app.add_error_handler() in bot.py"""
     err = context.error
+
+    # ── Single-instance Conflict guard ────────────────────────────────────
+    # A "Conflict: Terminated by other getUpdates request" means a SECOND
+    # process is polling the same token. The instance-lock in bot.py should
+    # already prevent this, but if one slips through (e.g. a split-second
+    # during a re-deploy) we must NOT spam the owner with a fake "crash" DM.
+    # Log it once and move on — the lock will sort it out.
+    if isinstance(err, (Conflict, TerminatedByOtherGetUpdates)):
+        logger.warning(
+            "⚠️ Telegram Conflict (another getUpdates instance). The "
+            "single-instance lock normally prevents this; if it persists, "
+            "ensure only one Iota process is running."
+        )
+        return
+
     logger.error(f"⚠️ Unhandled exception: {err}", exc_info=err)
 
     db_issue = _db_issue(err)

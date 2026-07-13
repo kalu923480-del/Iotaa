@@ -10,9 +10,10 @@ from utils.mongo_db import (ensure_user, get_user, get_user_rank,
                              add_referral)
 from utils.helpers import mention, mention_id, fmt, ts
 from utils.fonts import sc
+from utils.safe_html import safe_html
 from utils.sarvam import translate
 from utils.tts_engine import (text_to_speech, is_valid_voice,
-                             get_tts_config, voice_display)
+                             get_tts_config, voice_display, get_last_tts_error)
 from config import OWNER_ID, OWNER_USERNAME
 
 LANG_MAP = {
@@ -92,10 +93,15 @@ async def voice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await thinking.delete()
             await msg.reply_voice(af, caption=f"🔊 {voice_display(speaker)} — {text[:80]}")
         else:
-            await thinking.edit_text(
-                f"❌ {sc('TTS failed!')} Sarvam API returned no audio — "
-                f"check the bot's logs for the exact reason, or try again shortly."
+            reason = get_last_tts_error()
+            msg_txt = (
+                f"❌ {sc('TTS failed!')} Sarvam API returned no audio."
             )
+            if reason:
+                msg_txt += f"\n\n<i>{safe_html(reason)}</i>"
+            else:
+                msg_txt += " Check the bot's logs for details."
+            await thinking.edit_text(msg_txt, parse_mode="HTML")
     except Exception as e:
         from utils.safe_html import safe_html
         try:

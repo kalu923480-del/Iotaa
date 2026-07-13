@@ -1109,6 +1109,16 @@ def main():
             asyncio.create_task(fetch_voices(force=False))
         except Exception as e:
             logger.warning(f"Failed to load TTS config/voices from DB (using defaults): {e}")
+
+        # ── Single-instance guard ──────────────────────────────────────────
+        # Guarantee exactly one process polls Telegram. Secondaries wait and
+        # take over if the primary dies, so we never hit the fatal
+        # "Conflict: Terminated by other getUpdates request" crash.
+        try:
+            from utils.instance_lock import ensure_single_instance
+            await ensure_single_instance(application)
+        except Exception as e:
+            logger.warning(f"Instance-lock setup failed ({e}); proceeding without it.")
         # Background jobs
         # 🔴 FIX: a previous commit removed the `protection_alert_job`
         # call from here because it was undefined — but the REAL job
