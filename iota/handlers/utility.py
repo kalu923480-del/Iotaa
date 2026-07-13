@@ -1,5 +1,5 @@
 """Iota Utility - tr, voice, id, admins, own, detail (with history), last_seen, promoter"""
-import aiohttp, base64, io, time
+import aiohttp, time
 from telegram import Update
 from telegram.ext import ContextTypes
 from utils.mongo_db import (ensure_user, get_user, get_user_rank,
@@ -13,7 +13,8 @@ from utils.fonts import sc
 from utils.safe_html import safe_html
 from utils.sarvam import translate
 from utils.tts_engine import (text_to_speech, is_valid_voice,
-                             get_tts_config, voice_display, get_last_tts_error)
+                             get_tts_config, voice_display, get_last_tts_error,
+                             send_tts_voice)
 from config import OWNER_ID, OWNER_USERNAME
 
 LANG_MAP = {
@@ -89,9 +90,15 @@ async def voice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         audio_bytes = await text_to_speech(text[:2500], lang_code, speaker)
         if audio_bytes:
-            af = io.BytesIO(audio_bytes); af.name = "voice.wav"
             await thinking.delete()
-            await msg.reply_voice(af, caption=f"🔊 {voice_display(speaker)} — {text[:80]}")
+            ok, err = await send_tts_voice(
+                context.bot, msg.chat_id, audio_bytes,
+                caption=f"🔊 {voice_display(speaker)} — {text[:80]}",
+            )
+            if not ok:
+                await msg.reply_html(
+                    f"❌ Voice generated but couldn't be sent: {safe_html(err)}"
+                )
         else:
             reason = get_last_tts_error()
             msg_txt = (

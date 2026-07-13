@@ -34,7 +34,9 @@ Design notes (``0 bugs / 0 errors`` contract)
   ``/voice`` command and the owner panel read from it.
 """
 import aiohttp
+import asyncio
 import base64
+import difflib
 import io
 import logging
 import time
@@ -276,13 +278,36 @@ def voice_display(vid: str) -> str:
 #  Owner-configurable TTS defaults
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ── Setting-key aliases (typo tolerance) ────────────────────────────────────
+# Users (and owners) mistype setting keys. Map common variants to the canonical
+# key so e.g. "/ttssettings temprature 0.7" (missing an 'e') still works.
+KEY_ALIASES = {
+    "temperature": {"temperature", "temprature", "temp", "tempreture", "tempreture"},
+    "sample_rate": {"sample_rate", "samplerate", "samplerate", "sr", "sample-rate", "bitrate"},
+    "speaker":     {"speaker", "voice", "spk", "spkr"},
+    "pace":        {"pace", "speed", "rate"},
+    "model":       {"model", "mdl", "version"},
+}
+
+
+def normalize_setting_key(key: str) -> str:
+    """Map a (possibly misspelled) setting key to its canonical form."""
+    k = (key or "").strip().lower()
+    if k in KEY_ALIASES:
+        return k
+    for canon, variants in KEY_ALIASES.items():
+        if k in variants:
+            return canon
+    return k
+
+
 def get_tts_config() -> dict:
     return dict(_tts_config)
 
 
 def set_tts_setting(key: str, value) -> tuple[bool, str]:
-    """Validate + apply one TTS setting. Returns (ok, error_message)."""
-    key = (key or "").lower()
+    """Validates and applies one TTS setting. Returns (ok, error_message)."""
+    key = normalize_setting_key(key)
     if key == "speaker":
         vid = str(value).strip().lower()
         if not is_valid_voice(vid):
@@ -325,8 +350,12 @@ def set_tts_setting(key: str, value) -> tuple[bool, str]:
             )
         _tts_config["sample_rate"] = v
     else:
+        valid = ["model", "speaker", "pace", "temperature", "sample_rate"]
+        guess = difflib.get_close_matches(key, valid, n=1, cutoff=0.6)
+        hint = f" Did you mean '{guess[0]}'?" if guess else ""
         return False, (
-            "Unknown setting. Valid keys: model, speaker, pace, temperature, sample_rate"
+            f"Unknown setting '{key}'. Valid keys: "
+            f"{', '.join(valid)}.{hint}"
         )
     return True, ""
 
@@ -472,6 +501,18 @@ async def clone_voice(name: str, audio_bytes: bytes, filename: str,
                               timeout=aiohttp.ClientTimeout(total=120)) as r:
                 body = await r.text()
                 if r.status not in (200, 201):
+                    # Sarvam's voice cloning is an ENTERPRISE / dashboard-only
+                    # feature — there is no public REST clone endpoint (the
+                    # /text-to-speech/clone path returns 404). Report this
+                    # honestly so the owner isn't left debugging a phantom bug.
+                    if r.status == 404:
+                        return False, (
+                            "Sarvam voice cloning is NOT available via the public "
+                            "REST API (HTTP 404). It is an enterprise/dashboard "
+                            "feature — get a cloned voice id from the Sarvam "
+                            "dashboard (developer@sarvam.ai) and register it with "
+                            "/addclone <voice_id> <name>."
+                        )
                     return False, (
                         f"Sarvam clone API returned HTTP {r.status}: "
                         f"{body[:200]}"
@@ -567,3 +608,65 @@ def voice_bytes_to_file(audio: bytes, name: str = "voice.wav") -> io.BytesIO:
     af = io.BytesIO(audio)
     af.name = name
     return af
+
+
+# ── Resilient voice sending ──────────────────────────────────────────────────
+from telegram.error import TimedOut as _TimedOut, RetryAfter as _RetryAfter, \
+    BadRequest as _BadRequest
+
+
+async def send_tts_voice(bot, chat_id, audio_bytes: bytes, caption: str = "",
+                         filename: str = "voice.wav",
+                         reply_to_message_id: Optional[int] = None) -> tuple[bool, str]:
+    """
+    Send TTS audio as a voice note, resilient to Telegram timeouts / rate
+    limits / format rejections.
+
+    A transient Telegram ``TimedOut`` (or ``RetryAfter``) used to bubble all the
+    way up to the owner-panel crash reporter, making a slow network blip look
+    like a fatal crash. This helper retries once and, on a hard format
+    rejection, falls back to sending the file as a generic audio document, so
+    the command NEVER crashes on a flaky send. Returns ``(ok, error_or_None)``.
+    """
+    if not audio_bytes:
+        return False, "No audio to send."
+    af = io.BytesIO(audio_bytes)
+    af.name = filename
+
+    async def _try():
+        af.seek(0)
+        return await bot.send_voice(
+            chat_id=chat_id, voice=af, caption=caption or None,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    try:
+        await _try()
+        return True, None
+    except _RetryAfter as e:
+        await asyncio.sleep(min(getattr(e, "retry_after", 5) or 5, 30))
+        try:
+            await _try()
+            return True, None
+        except Exception as e2:
+            return False, f"Rate-limited then failed: {type(e2).__name__}: {e2}"
+    except _TimedOut:
+        await asyncio.sleep(2)
+        try:
+            await _try()
+            return True, None
+        except Exception as e2:
+            return False, f"Telegram timed out sending the voice: {type(e2).__name__}: {e2}"
+    except _BadRequest:
+        # e.g. unsupported voice format — try a generic audio file instead.
+        try:
+            af.seek(0)
+            await bot.send_audio(
+                chat_id=chat_id, audio=af, caption=caption or None,
+                reply_to_message_id=reply_to_message_id,
+            )
+            return True, None
+        except Exception as e2:
+            return False, f"Voice format rejected, audio fallback failed: {e2}"
+    except Exception as e:
+        return False, f"Failed to send voice: {type(e).__name__}: {e}"

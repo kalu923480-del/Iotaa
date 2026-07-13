@@ -66,16 +66,18 @@ class TestVoiceCmdFailure(unittest.TestCase):
         update, thinking = _make_update([])
         context = MagicMock()
         context.args = ["hi", "hello world"]
+        context.bot.send_voice = AsyncMock()
 
         with patch.object(utility, "text_to_speech", new=AsyncMock(return_value=b"WAVEDATA")), \
              patch.object(utility, "get_tts_config", return_value={"speaker": "shubh"}), \
              patch("utils.tts_engine.is_valid_voice", return_value=True), \
              patch("utils.tts_engine.get_voice_ids", return_value={"shubh"}), \
-             patch("utils.tts_engine.voice_display", return_value="Shubh"):
+             patch("utils.tts_engine.voice_display", return_value="Shubh"), \
+             patch("utils.tts_engine.send_tts_voice", new=AsyncMock(return_value=(True, None))):
             _run(utility.voice_cmd(update, context))
 
         thinking.delete.assert_awaited()
-        update.effective_message.reply_voice.assert_awaited()
+        context.bot.send_voice.assert_awaited()
 
 
 if __name__ == "__main__":

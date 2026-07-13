@@ -14,7 +14,8 @@
 import asyncio, time, logging, traceback, functools, io
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
-from telegram.error import RetryAfter, Forbidden, BadRequest, TelegramError
+from telegram.error import (RetryAfter, Forbidden, BadRequest, TelegramError,
+                             TimedOut, NetworkError)
 from utils.mongo_db import (get_db, ensure_user, get_user, update_user,
                              add_balance, total_users, log_stars_payment,
                              get_stars_total, mark_user_unreachable,
@@ -30,6 +31,7 @@ from utils.fonts import sc
 from utils.ai_provider import (get_all_models, get_current_models,
                                  set_model, save_model_config_db)
 from utils.safe_html import safe_html, placeholder
+from utils.telegram_safe import safe_call
 # Re-use Iota's existing emoji→mood detection so auto-decided moods line up
 # with what the sticker-reply system already understands
 # (handlers/sticker_reply.py).
@@ -84,6 +86,24 @@ def owner_only(func):
             result = await func(update, context, *a, **kw)
             logger.info(f"✅ {cmd_name}: completed successfully")
             return result
+        except (TimedOut, NetworkError) as e:
+            # A transient Telegram network blip (slow gateway, dropped
+            # connection) is NOT a code bug — reporting it as a hard "crashed!"
+            # is misleading. Log it, tell the owner to retry, and move on.
+            logger.warning(
+                f"⚠️ {cmd_name}: transient Telegram network error "
+                f"({type(e).__name__}) — not a crash, just retry."
+            )
+            try:
+                await safe_call(
+                    lambda: update.effective_message.reply_html(
+                        f"⏳ <b>{safe_html(cmd_name)}</b> — Telegram took too "
+                        f"long to respond (network slow). Please try again."
+                    ),
+                    label=f"{cmd_name}.neterr",
+                )
+            except Exception:
+                pass
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"❌ {cmd_name}: CRASHED with {type(e).__name__}: {e}\n{tb}")
@@ -163,6 +183,7 @@ async def owner_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/ttsvoices — List all voices (auto-fetched from Sarvam)\n"
         f"/ttsrefresh — Refresh the live voice list\n"
         f"/clonevoice — Reply to audio + /clonevoice &lt;name&gt; (voice cloning)\n"
+        f"/addclone — Register a cloned voice_id from the Sarvam dashboard\n"
         f"/clonedvoices /delclone — Manage cloned voices\n"
         f"/previewtts {placeholder('text')}\n\n"
         f"<b>🗑️ Broadcast History:</b>\n"
@@ -1491,35 +1512,59 @@ async def ttssettings_cmd(update, context):
     from utils.tts_engine import set_tts_setting, save_tts_config_db
     args = context.args
     if len(args) < 2:
-        await update.message.reply_html(_tts_panel_text()); return
+        await safe_call(lambda: update.message.reply_html(_tts_panel_text()),
+                        label="ttssettings.view"); return
 
     key, value = args[0].lower(), args[1]
     ok, err = set_tts_setting(key, value)
     if not ok:
-        await update.message.reply_html(f"❌ {safe_html(err)}"); return
+        await safe_call(lambda: update.message.reply_html(f"❌ {safe_html(err)}"),
+                        label="ttssettings.bad"); return
 
     await save_tts_config_db()
-    await update.message.reply_html(f"✅ TTS <b>{safe_html(key)}</b> set to <code>{safe_html(value)}</code>!\n\n" + _tts_panel_text())
+    await safe_call(
+        lambda: update.message.reply_html(
+            f"✅ TTS <b>{safe_html(key)}</b> set to <code>{safe_html(value)}</code>!\n\n"
+            + _tts_panel_text()
+        ),
+        label="ttssettings.ok",
+    )
 
 
 @owner_only
 async def previewtts_cmd(update, context):
     """Owner: preview the current TTS settings with a sample line."""
-    from utils.tts_engine import text_to_speech
+    from utils.tts_engine import text_to_speech, get_last_tts_error, send_tts_voice
     text = " ".join(context.args) if context.args else "Hii, main Iota hoon! Ye meri current voice hai."
-    thinking = await update.message.reply_html("🔊 Generating preview...")
+    thinking = await safe_call(
+        lambda: update.message.reply_html("🔊 Generating preview..."),
+        label="previewtts.status",
+    )
     audio = await text_to_speech(text[:2500])
     if not audio:
-        from utils.tts_engine import get_last_tts_error
         reason = get_last_tts_error()
         msg = "❌ TTS generation failed — check the bot's logs for details."
         if reason:
             msg = f"❌ TTS generation failed:\n<code>{safe_html(reason)}</code>"
-        await thinking.edit_text(msg, parse_mode="HTML"); return
-    import io
-    af = io.BytesIO(audio); af.name = "preview.wav"
-    await thinking.delete()
-    await update.message.reply_voice(af, caption=f"🔊 Preview: {safe_html(text[:100])}")
+        if thinking is not None:
+            await safe_call(lambda: thinking.edit_text(msg, parse_mode="HTML"),
+                            label="previewtts.fail.edit")
+        else:
+            await safe_call(lambda: update.message.reply_html(msg),
+                            label="previewtts.fail.reply")
+        return
+    if thinking is not None:
+        await safe_call(lambda: thinking.delete(), label="previewtts.delete")
+    ok, err = await send_tts_voice(
+        context.bot, update.effective_chat.id, audio,
+        caption=f"🔊 Preview: {safe_html(text[:100])}",
+    )
+    if not ok:
+        await safe_call(
+            lambda: update.message.reply_html(
+                f"❌ Voice generated but couldn't be sent: {safe_html(err)}"),
+            label="previewtts.sendfail",
+        )
 
 
 @owner_only
@@ -1547,22 +1592,30 @@ async def ttsvoices_cmd(update, context):
         f"Set default: /ttssettings speaker &lt;id&gt;\n"
         f"Refresh from API: /ttsrefresh"
     )
-    await update.message.reply_html(text)
+    await safe_call(lambda: update.message.reply_html(text), label="ttsvoices")
 
 
 @owner_only
 async def ttsrefresh_cmd(update, context):
     """Owner: force a fresh fetch of the live voice catalogue from Sarvam."""
     from utils.tts_engine import fetch_voices, get_voices, get_voices_source
-    status = await update.message.reply_html("🔄 Fetching live voices from Sarvam...")
+    status = await safe_call(
+        lambda: update.message.reply_html("🔄 Fetching live voices from Sarvam..."),
+        label="ttsrefresh.status",
+    )
     voices = await fetch_voices(force=True)
-    await status.edit_text(
+    msg = (
         f"✅ <b>Voice list refreshed!</b>\n\n"
         f"Source: {safe_html(get_voices_source())}\n"
         f"Total voices available: <b>{len(get_voices())}</b> "
-        f"(fetched {len(voices)} from API).",
-        parse_mode="HTML"
+        f"(fetched {len(voices)} from API)."
     )
+    if status is not None:
+        await safe_call(lambda: status.edit_text(msg, parse_mode="HTML"),
+                        label="ttsrefresh.edit")
+    else:
+        await safe_call(lambda: update.message.reply_html(msg),
+                        label="ttsrefresh.reply")
 
 
 @owner_only
@@ -1571,17 +1624,20 @@ async def clonedvoices_cmd(update, context):
     from utils.tts_engine import get_cloned_voices
     cloned = get_cloned_voices()
     if not cloned:
-        await update.message.reply_html(
-            "🧬 No cloned voices yet.\n\n"
-            "Reply to a voice/audio message and send:\n"
-            "<code>/clonevoice &lt;name&gt;</code>"
+        await safe_call(
+            lambda: update.message.reply_html(
+                "🧬 No cloned voices yet.\n\n"
+                "Reply to a voice/audio message and send:\n"
+                "<code>/clonevoice &lt;name&gt;</code>"
+            ),
+            label="clonedvoices.empty",
         ); return
     text = "🧬 <b>Cloned Voices</b>\n\n"
     for v in cloned:
         when = time.strftime('%d/%m/%Y', time.localtime(v.get("created_at", 0)))
         text += f"• <code>{safe_html(v['id'])}</code> — {safe_html(v.get('name',''))} ({when})\n"
     text += "\nUse: /ttssettings speaker &lt;id&gt;  ·  Delete: /delclone &lt;id&gt;"
-    await update.message.reply_html(text)
+    await safe_call(lambda: update.message.reply_html(text), label="clonedvoices")
 
 
 @owner_only
@@ -1589,18 +1645,33 @@ async def delclone_cmd(update, context):
     """Owner: delete a cloned voice by id."""
     from utils.tts_engine import delete_cloned_voice, get_cloned_voices
     if not context.args:
-        await update.message.reply_html(
-            "🗑️ Usage: /delclone &lt;voice_id&gt;\n"
-            "List cloned voices: /clonedvoices"
+        await safe_call(
+            lambda: update.message.reply_html(
+                "🗑️ Usage: /delclone &lt;voice_id&gt;\n"
+                "List cloned voices: /clonedvoices"
+            ),
+            label="delclone.usage",
         ); return
     vid = context.args[0].strip().lower()
     if vid not in {v["id"] for v in get_cloned_voices()}:
-        await update.message.reply_html(f"❌ No cloned voice with id <code>{safe_html(vid)}</code>."); return
+        await safe_call(
+            lambda: update.message.reply_html(
+                f"❌ No cloned voice with id <code>{safe_html(vid)}</code>."),
+            label="delclone.none",
+        ); return
     ok = await delete_cloned_voice(vid)
     if ok:
-        await update.message.reply_html(f"🗑️ Cloned voice <code>{safe_html(vid)}</code> deleted!")
+        await safe_call(
+            lambda: update.message.reply_html(
+                f"🗑️ Cloned voice <code>{safe_html(vid)}</code> deleted!"),
+            label="delclone.ok",
+        )
     else:
-        await update.message.reply_html(f"❌ Could not delete <code>{safe_html(vid)}</code>.")
+        await safe_call(
+            lambda: update.message.reply_html(
+                f"❌ Could not delete <code>{safe_html(vid)}</code>."),
+            label="delclone.fail",
+        )
 
 
 @owner_only
@@ -1611,32 +1682,57 @@ async def clonevoice_cmd(update, context):
     Reply to a Telegram voice/audio message and run:
         /clonevoice <name>
 
-    The sample is sent to Sarvam's consent-based voice-cloning API. On success
-    the new voice id is registered and can be used as the speaker (e.g.
-    /ttssettings speaker <id> or /voice <id> hello).
+    If Sarvam's public API supports voice cloning in your plan it is attempted;
+    otherwise (the clone endpoint is enterprise/dashboard-only and returns 404)
+    you get a clear, actionable message and a working path via /addclone.
     """
     from utils.tts_engine import clone_voice
     reply = update.message.reply_to_message
     if not reply or not (reply.voice or reply.audio):
-        await update.message.reply_html(
-            "🧬 <b>Clone a voice</b>\n\n"
-            "Reply to a <b>voice</b> or <b>audio</b> message, then:\n"
-            "<code>/clonevoice &lt;name&gt;</code>\n\n"
-            "Tip: use a clean 15–60s clip of a single speaker."
+        await safe_call(
+            lambda: update.message.reply_html(
+                "🧬 <b>Clone a voice</b>\n\n"
+                "Reply to a <b>voice</b> or <b>audio</b> message, then:\n"
+                "<code>/clonevoice &lt;name&gt;</code>\n\n"
+                "Tip: use a clean 15–60s clip of a single speaker."
+            ),
+            label="clonevoice.usage",
         ); return
     if not context.args:
-        await update.message.reply_html("❌ Give the cloned voice a name: /clonevoice &lt;name&gt;"); return
+        await safe_call(
+            lambda: update.message.reply_html(
+                "❌ Give the cloned voice a name: /clonevoice &lt;name&gt;"),
+            label="clonevoice.noname",
+        ); return
     name = " ".join(context.args)
 
     media = reply.voice or reply.audio
-    status = await update.message.reply_html(f"🧬 Cloning voice “{safe_html(name)}”…")
+    status = await safe_call(
+        lambda: update.message.reply_html(f"🧬 Cloning voice “{safe_html(name)}”…"),
+        label="clonevoice.status",
+    )
+
+    # Downloading the sample can hit a Telegram timeout/network error — never
+    # let that bubble up as a "crashed!" report.
     try:
-        f = await context.bot.get_file(media.file_id)
+        f = await safe_call(
+            lambda: context.bot.get_file(media.file_id), label="clonevoice.getfile")
+        if f is None:
+            raise RuntimeError("could not fetch the file from Telegram")
         bio = io.BytesIO()
-        await f.download_to_memory(bio)
+        await safe_call(lambda: f.download_to_memory(bio), label="clonevoice.download")
         audio_bytes = bio.getvalue()
+        if not audio_bytes:
+            raise RuntimeError("downloaded sample was empty")
     except Exception as e:
-        await status.edit_text(f"❌ Could not download the sample: {safe_html(str(e))}", parse_mode="HTML"); return
+        msg = f"❌ Could not download the sample: {safe_html(str(e))}"
+        if status is not None:
+            await safe_call(lambda: status.edit_text(msg, parse_mode="HTML"),
+                            label="clonevoice.dlerr.edit")
+        else:
+            await safe_call(lambda: update.message.reply_html(msg),
+                            label="clonevoice.dlerr.reply")
+        return
 
     ok, result = await clone_voice(
         name, audio_bytes,
@@ -1644,14 +1740,74 @@ async def clonevoice_cmd(update, context):
         owner_id=update.effective_user.id,
     )
     if not ok:
-        await status.edit_text(f"❌ Voice clone failed:\n<code>{safe_html(result)}</code>", parse_mode="HTML"); return
-    await status.edit_text(
+        msg = f"❌ Voice clone failed:\n<code>{safe_html(result)}</code>"
+        if status is not None:
+            await safe_call(lambda: status.edit_text(msg, parse_mode="HTML"),
+                            label="clonevoice.fail.edit")
+        else:
+            await safe_call(lambda: update.message.reply_html(msg),
+                            label="clonevoice.fail.reply")
+        return
+    final = (
         f"✅ Voice cloned!\n\n"
         f"🆔 ID: <code>{safe_html(result)}</code>\n"
         f"👤 Name: {safe_html(name)}\n\n"
         f"Use it now: /ttssettings speaker {safe_html(result)}\n"
-        f"Or: /voice {safe_html(result)} hello world",
-        parse_mode="HTML"
+        f"Or: /voice {safe_html(result)} hello world"
+    )
+    if status is not None:
+        await safe_call(lambda: status.edit_text(final, parse_mode="HTML"),
+                        label="clonevoice.ok.edit")
+    else:
+        await safe_call(lambda: update.message.reply_html(final),
+                        label="clonevoice.ok.reply")
+
+
+@owner_only
+async def addclone_cmd(update, context):
+    """
+    Owner: manually register a cloned voice obtained OUTSIDE the public API.
+
+    Sarvam's voice cloning is an enterprise/dashboard feature and is NOT
+    callable via the public REST API (so /clonevoice returns a clear 404
+    message). If you obtained a cloned ``voice_id`` from the Sarvam dashboard
+    (or enterprise support), register it here so it becomes a usable speaker:
+
+        /addclone <voice_id> <name>
+
+    Once added it appears in /clonedvoices and can be set as the default via
+    /ttssettings speaker <voice_id> (or used per-call with /voice <voice_id> hi).
+    """
+    from utils.tts_engine import add_cloned_voice
+    if len(context.args) < 2:
+        await safe_call(
+            lambda: update.message.reply_html(
+                "🧬 <b>Add a cloned voice (manual)</b>\n\n"
+                "Sarvam cloning is dashboard/enterprise-only, so register a voice "
+                "id you already obtained:\n"
+                "<code>/addclone &lt;voice_id&gt; &lt;name&gt;</code>\n\n"
+                "Example: <code>/addclone mybrandvoice My Brand Voice</code>"
+            ),
+            label="addclone.usage",
+        ); return
+    vid = context.args[0].strip().lower()
+    name = " ".join(context.args[1:]).strip()
+    if not vid or not name:
+        await safe_call(
+            lambda: update.message.reply_html(
+                "❌ Provide both a voice_id and a name: /addclone &lt;voice_id&gt; &lt;name&gt;"),
+            label="addclone.bad",
+        ); return
+    rec = await add_cloned_voice(vid, name, {"owner": update.effective_user.id})
+    await safe_call(
+        lambda: update.message.reply_html(
+            f"✅ Cloned voice registered!\n\n"
+            f"🆔 ID: <code>{safe_html(rec['id'])}</code>\n"
+            f"👤 Name: {safe_html(rec['name'])}\n\n"
+            f"Set as default: /ttssettings speaker {safe_html(rec['id'])}\n"
+            f"Or: /voice {safe_html(rec['id'])} hello world"
+        ),
+        label="addclone.ok",
     )
 
 
