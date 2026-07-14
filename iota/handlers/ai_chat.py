@@ -240,18 +240,31 @@ def _md_to_html(text: str) -> str:
 # 🔴 SAFETY NET: strip any leaked [SEARCH RESULTS] block from the AI's
 # reply. The system prompt explicitly forbids the model from echoing
 # this block back, but LLMs occasionally ignore instructions (especially
-# at higher temperature) — this was exactly the bug behind replies like
-# "[SEARCH RESULTS] 🔍 Real-time info for '...': 1. ... 2. ..." leaking
-# straight into what the user sees. This runs unconditionally as a final
+# at higher temperature). This runs unconditionally as a final
 # guarantee, independent of how well the model follows instructions.
+#
+# 🔴 CRITICAL FIX: the previous regex was
+#     r'\[?SEARCH RESULTS\]?.*?(\[END SEARCH RESULTS\]|\Z)'
+# which matched the BARE phrase "search results" anywhere in the reply
+# (brackets optional) and then — because there was no END marker — ate
+# *everything from that point to the end of the message* (\Z). So any
+# normal reply that merely contained the words "search results" (e.g.
+# "maine search results dekhe") got silently truncated to nothing,
+# making Iota look like she'd stopped replying. We now ONLY strip a
+# properly delimited block that BOTH starts with the bracketed open tag
+# AND ends with the [END SEARCH RESULTS] terminator. Bare mentions of
+# "search results" in natural text are left completely intact.
 _SEARCH_LEAK_RE = re.compile(
-    r'\[?SEARCH RESULTS\]?.*?(\[END SEARCH RESULTS\]|\Z)',
+    r'\[SEARCH RESULTS[^\]]*\].*?\[END SEARCH RESULTS\]',
     re.IGNORECASE | re.DOTALL
 )
+# Only strip the exact 🔍 summary format we inject — never a 🔍 that's
+# just part of Iota's normal emoji usage.
 _SEARCH_EMOJI_LEAK_RE = re.compile(
-    r'🔍[^\n]*(?:\n\d+\..*)*',  # a 🔍-prefixed line followed by numbered result lines
-    re.DOTALL
+    r'🔍\s*Real-time info for[^\n]*(?:\n\d+\..*)*',
+    re.IGNORECASE | re.DOTALL
 )
+
 
 def _strip_search_leak(text: str) -> str:
     cleaned = _SEARCH_LEAK_RE.sub('', text)
@@ -262,6 +275,47 @@ def _strip_search_leak(text: str) -> str:
     if not cleaned:
         return "hmm socho toh, kuch aur pucho na 🙄"
     return cleaned
+
+
+# ── Resilient send helpers ──────────────────────────────────────────────────────
+#
+# Telegram throws a BadRequest ("can't parse entities") if the HTML we
+# hand it is even slightly malformed (e.g. an unclosed <b>, or a stray
+# &/< that slipped past escaping). The original code called
+# msg.reply_html(...) directly, so ANY such error bubbled up into the
+# handler's bare `except` and the user got absolute silence — looking
+# exactly like "Iota stopped replying". These wrappers always deliver
+# the message: HTML first, then plain text as a guaranteed fallback.
+
+async def _safe_send(msg, text: str):
+    """Send Iota's reply, resilient to Telegram entity-parse errors.
+    Tries HTML (for bold/italic) first; if Telegram rejects the markup,
+    falls back to plain text so the user always gets the message."""
+    try:
+        return await msg.reply_html(text)
+    except Exception as e:
+        logger.debug(f"_safe_send HTML failed, falling back to plain: {e}")
+        try:
+            return await msg.reply_text(text, parse_mode=None)
+        except Exception as e2:
+            logger.warning(f"_safe_send plain failed: {e2}")
+            return None
+
+
+async def _safe_edit(thinking, text: str):
+    """Edit the 'thinking…' placeholder, falling back to plain text and
+    then to a fresh plain send if editing fails for any reason."""
+    try:
+        return await thinking.edit_text(text, parse_mode="HTML")
+    except Exception:
+        try:
+            return await thinking.edit_text(text)
+        except Exception:
+            try:
+                return await thinking.chat.send_message(text)
+            except Exception as e:
+                logger.warning(f"_safe_edit failed: {e}")
+                return None
 
 
 # ── Mood-based GIF-with-reply ─────────────────────────────────────────────────
@@ -441,18 +495,27 @@ async def _respond(uid: int, text: str, is_premium: bool,
     system = _build_system() + ctx
     messages = [{"role": "system", "content": system}] + hist
 
-    reply = await call_ai(messages, is_premium=is_premium,
-                          max_tokens=max_tokens, temperature=0.45)
+    # Call the AI, but NEVER let a provider outage / rate-limit crash the
+    # reply path. If every provider fails, `call_ai` raises — we catch it
+    # here and fall back to an in-character line so the user always gets
+    # *something* instead of total silence.
+    try:
+        reply = await call_ai(messages, is_premium=is_premium,
+                              max_tokens=max_tokens, temperature=0.45)
+    except Exception as e:
+        logger.warning(f"call_ai failed in _respond: {e}")
+        reply = None
 
     # Safety net: strip any leaked [SEARCH RESULTS] block BEFORE the
     # markdown→HTML conversion (so we're working with the model's raw
     # text, not partially-escaped HTML).
-    reply = _strip_search_leak(reply)
+    if reply:
+        reply = _strip_search_leak(reply)
 
     # Retry once if the model echoed ONLY the search block (so the
     # stripped reply is empty) even though we DID hand it the results.
     # This salvages a correct answer instead of showing a fallback.
-    if not reply.strip() and search_injected:
+    if (not reply or not reply.strip()) and search_injected:
         reinforced = (
             system
             + "\n\n⚠️ IMPORTANT: You MUST answer the user's question DIRECTLY "
@@ -460,13 +523,18 @@ async def _respond(uid: int, text: str, is_premium: bool,
             "the search block. Give the direct answer in 1-2 lines right now."
         )
         retry_messages = [{"role": "system", "content": reinforced}] + hist
-        reply = await call_ai(retry_messages, is_premium=is_premium,
-                              max_tokens=max_tokens, temperature=0.45)
-        reply = _strip_search_leak(reply)
+        try:
+            retry_reply = await call_ai(retry_messages, is_premium=is_premium,
+                                        max_tokens=max_tokens, temperature=0.45)
+        except Exception as e:
+            logger.warning(f"call_ai retry failed in _respond: {e}")
+            retry_reply = None
+        if retry_reply:
+            reply = _strip_search_leak(retry_reply)
 
     # If still nothing usable, give an honest, on-character fallback
     # rather than the generic leak-strip message.
-    if not reply.strip():
+    if not reply or not reply.strip():
         reply = "abhī check nahī kar paayī, thodi der baad try karo 🥺"
 
     # Convert any markdown the AI returned to Telegram HTML
@@ -503,11 +571,11 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = await _respond(u.id, user_text, d.get("is_premium", False),
                                is_group, chat_obj.title or "",
                                first_name=u.first_name or "", username=u.username or "")
-        await thinking.edit_text(reply, parse_mode="HTML")
+        await _safe_edit(thinking, reply)
         await _maybe_send_reply_gif(msg, reply)
     except Exception as e:
         logger.warning(f"ai_cmd failed: {e}")
-        await thinking.edit_text("system pagal ho gaya 🙄 baad mein try karo")
+        await _safe_edit(thinking, "system pagal ho gaya 🙄 baad mein try karo")
 
 
 # ── DM auto-reply ─────────────────────────────────────────────────────────────
@@ -587,7 +655,7 @@ async def dm_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         reply = await _respond(u.id, text, d.get("is_premium", False), False, "", 130,
                                first_name=u.first_name or "", username=u.username or "")
-        await msg.reply_html(reply)
+        await _safe_send(msg, reply)
         await _maybe_send_reply_gif(msg, reply)
     except Exception as e:
         logger.warning(f"dm_message_handler failed: {e}")
@@ -662,7 +730,7 @@ async def group_mention_handler(update: Update, context: ContextTypes.DEFAULT_TY
         reply = await _respond(u.id, clean, d.get("is_premium", False),
                                True, update.effective_chat.title or "", 130,
                                first_name=u.first_name or "", username=u.username or "")
-        await msg.reply_html(reply)
+        await _safe_send(msg, reply)
         await _maybe_send_reply_gif(msg, reply)
     except Exception as e:
         logger.warning(f"group_mention_handler AI failed: {e}")
