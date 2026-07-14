@@ -53,6 +53,10 @@ if not OWNER_NAME or OWNER_NAME in ("Owner", ""):
 BOT_NAME       = _env("BOT_NAME", "Iota")
 BOT_USERNAME   = _env("BOT_USERNAME", "Its_iotabot")
 BOT_AGE        = int(_env("BOT_AGE", "17") or "17")
+# Iota's private-background facts. These are NOT revealed in normal chat —
+# the AI only shares them when the user explicitly asks (see ai_chat.py).
+BOT_FROM       = _env("BOT_FROM", "Delhi, India")
+BOT_DOB        = _env("BOT_DOB", "9 March 2009")
 
 # ── Update channel (leave blank to hide the button) ──────────────────────
 UPDATE_CHANNEL_USERNAME = _env("UPDATE_CHANNEL_USERNAME", "")
