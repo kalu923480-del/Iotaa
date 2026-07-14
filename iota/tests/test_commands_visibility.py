@@ -41,11 +41,19 @@ class TestOwnerCategoryVisibility(unittest.TestCase):
 
     def test_full_file_excludes_owner_for_normal(self):
         # The downloadable file is built from _visible_categories, so a normal
-        # user's export must never contain the owner-only commands.
+        # user's export must never contain the owner-only commands — including
+        # ones that used to be miscategorised under Stats/Stickers/Info.
         cats = cl._visible_categories(privileged=False)
         flat = [cmd for cmds in cats.values() for cmd, _ in cmds]
-        for owner_cmd in ("lockdown", "massban", "sudoadd", "shieldstatus"):
+        for owner_cmd in (
+            "lockdown", "massban", "sudoadd", "shieldstatus",
+            "growth", "health", "online", "botstats",
+            "userinfo", "addsticker", "previewsticker",
+        ):
             self.assertNotIn(owner_cmd, flat)
+        # user-facing categories must still be present (not emptied)
+        for c in ("Stats", "Stickers", "Info", "Economy"):
+            self.assertIn(c, cats)
 
 
 if __name__ == "__main__":
