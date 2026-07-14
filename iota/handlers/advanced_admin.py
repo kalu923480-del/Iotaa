@@ -31,51 +31,11 @@ logger = logging.getLogger(__name__)
 def _db(): return get_db()
 
 async def _get_group_settings(cid: int) -> dict:
-    doc = await _db().group_settings.find_one({"_id": cid})
-    if not doc:
-        doc = {
-            "_id": cid,
-            # Lock settings
-            "lock_messages": False,
-            "lock_media": False,
-            "lock_stickers": False,
-            "lock_gifs": False,
-            "lock_links": False,
-            "lock_polls": False,
-            "lock_forwards": False,
-            "lock_games": False,
-            # Flood
-            "flood_limit": 0,       # 0 = disabled
-            "flood_action": "mute", # mute/ban/kick
-            # Rules
-            "rules": "",
-            "rules_button": "",
-            # Warn
-            "warn_limit": 3,
-            "warn_mode": "ban",     # ban/mute/kick
-            "warn_time": 0,
-            # Welcome/Goodbye
-            "goodbye_enabled": False,
-            "goodbye_msg": "",
-            # Captcha
-            "captcha_enabled": False,
-            "captcha_time": 120,
-            # Log channel
-            "log_channel": 0,
-            # Clean service
-            "clean_service": False,
-            # Notes
-            # Anti-channel pin
-            "anti_channel_pin": False,
-            # Disable commands
-            "disabled_cmds": [],
-            # Silent actions
-            "silent_actions": False,
-            # Lang
-            "lang": "en",
-        }
-        await _db().group_settings.insert_one(doc)
-    return doc
+    # Delegate to the centralised, always-complete default document in
+    # utils/mongo_db (ensure_group_settings). This guarantees the field set
+    # matches what the auto-tracking path and other handlers expect.
+    from utils.mongo_db import ensure_group_settings
+    return await ensure_group_settings(cid)
 
 async def _update_gs(cid: int, **kw):
     await _db().group_settings.update_one({"_id": cid}, {"$set": kw}, upsert=True)

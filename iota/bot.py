@@ -6,10 +6,11 @@
 """
 import logging, asyncio, os, time
 from telegram import Update
+from telegram.ext import ContextTypes
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, CallbackQueryHandler, PreCheckoutQueryHandler, TypeHandler,
-    ChatJoinRequestHandler, ApplicationHandlerStop,
+    ChatJoinRequestHandler, ApplicationHandlerStop, ChatMemberHandler,
 )
 from pymongo import ReturnDocument
 import aiohttp
@@ -786,6 +787,16 @@ def main():
         filters.SUCCESSFUL_PAYMENT, successful_payment_handler
     ))
 
+    # ── Group auto-tracking ───────────────────────────────────────────
+    # Whenever the bot is added to ANY chat (admin OR non-admin), record the
+    # group in group_settings so it is reachable by /broadcast, /announce and
+    # the welcome system. Previously groups were only created lazily when an
+    # admin ran an advanced-admin command, so non-admin groups were invisible
+    # to broadcasts and welcome settings could not persist.
+    app.add_handler(ChatMemberHandler(
+        _track_group_membership, ChatMemberHandler.MY_CHAT_MEMBER
+    ))
+
     # ── Member events ──────────────────────────────────────────────────
     # 🆕 GBAN enforcement MUST run before the welcome handler so a globally
     # banned user is booted before Iota welcomes them. Runs at group -3.
@@ -1274,6 +1285,33 @@ def main():
             logger.exception(f"💥 Polling loop error: {e}. Retrying in 15s.")
             import time as _t
             _t.sleep(15)
+
+
+# ── Group auto-tracking handler ────────────────────────────────────────────────
+
+async def _track_group_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Record a chat in group_settings the moment the bot joins it (admin or
+    not), so it becomes reachable by broadcasts/announces and welcome. Marks
+    it inactive when the bot leaves. Best-effort: any DB error is swallowed so
+    this never interferes with normal message handling.
+    """
+    mcu = update.my_chat_member
+    if not mcu:
+        return
+    chat = update.effective_chat
+    if chat is None or chat.type not in ("group", "supergroup"):
+        return
+    status = getattr(mcu.new_chat_member, "status", None)
+    try:
+        from utils.mongo_db import ensure_group_settings, set_group_inactive
+        if status in ("member", "administrator", "creator"):
+            await ensure_group_settings(chat.id, chat.title or "")
+            logger.info(f"📥 Tracked new group {chat.id} ({chat.title})")
+        elif status in ("left", "kicked"):
+            await set_group_inactive(chat.id)
+    except Exception:
+        logger.debug("group auto-tracking failed", exc_info=True)
 
 
 # ── Background jobs ────────────────────────────────────────────────────────────

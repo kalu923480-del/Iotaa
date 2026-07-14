@@ -274,9 +274,82 @@ async def list_broadcast_history(limit: int = 20):
 
 
 async def get_all_groups():
-    """All group chat ids the bot is a member of (for group broadcasts/
-    announces). Returns a list of {"_id": chat_id} dicts."""
-    return await get_db().group_settings.find({}, {"_id": 1}).to_list(100000)
+    """Active group chat ids the bot is a member of (for group broadcasts/
+    announces). Excludes groups the bot has left (active=False) so dead
+    chats don't waste send attempts. Returns a list of {"_id": chat_id} dicts."""
+    return await get_db().group_settings.find(
+        {"active": {"$ne": False}}, {"_id": 1}
+    ).to_list(100000)
+
+
+# Canonical default document for a group. Centralised here so both the
+# auto-tracking path (ensure_group_settings) and handlers/advanced_admin.py
+# always agree on the field set — a mismatch would cause KeyErrors in the
+# advanced-admin commands.
+DEFAULT_GROUP_SETTINGS = {
+    "lock_messages": False,
+    "lock_media": False,
+    "lock_stickers": False,
+    "lock_gifs": False,
+    "lock_links": False,
+    "lock_polls": False,
+    "lock_forwards": False,
+    "lock_games": False,
+    "flood_limit": 0,       # 0 = disabled
+    "flood_action": "mute", # mute/ban/kick
+    "rules": "",
+    "rules_button": "",
+    "warn_limit": 3,
+    "warn_mode": "ban",     # ban/mute/kick
+    "warn_time": 0,
+    "goodbye_enabled": False,
+    "goodbye_msg": "",
+    "captcha_enabled": False,
+    "captcha_time": 120,
+    "log_channel": 0,
+    "clean_service": False,
+    "anti_channel_pin": False,
+    "disabled_cmds": [],
+    "silent_actions": False,
+    "lang": "en",
+    "tracked_at": 0,
+    "active": True,
+}
+
+
+async def ensure_group_settings(cid: int, title: str = "", active: bool = True):
+    """
+    Make sure a chat has a complete group_settings doc so it shows up in
+    group broadcasts and advanced-admin features work. Uses $setOnInsert so
+    any admin customisations already saved are preserved (never overwritten).
+
+    Called automatically whenever the bot joins ANY group (admin or not) via
+    the my_chat_member handler in bot.py — previously groups were only
+    created lazily when an admin ran an advanced-admin command, so
+    non-admin groups were invisible to /broadcast and similar.
+    """
+    doc = dict(DEFAULT_GROUP_SETTINGS)
+    doc["tracked_at"] = now()
+    doc["active"] = active
+    if title:
+        doc["title"] = title
+    await get_db().group_settings.update_one(
+        {"_id": cid}, {"$setOnInsert": doc}, upsert=True
+    )
+    # Welcome defaults so the welcome system has something to read.
+    await get_db().welcome_settings.update_one(
+        {"_id": cid},
+        {"$setOnInsert": {"enabled": True, "custom_msg": "", "send_gif": True}},
+        upsert=True,
+    )
+    return await get_db().group_settings.find_one({"_id": cid})
+
+
+async def set_group_inactive(cid: int):
+    """Mark a group the bot has left so it stops receiving broadcasts."""
+    await get_db().group_settings.update_one(
+        {"_id": cid}, {"$set": {"active": False}}
+    )
 
 # ── Card rank ────────────────────────────────────────────────────────
 
