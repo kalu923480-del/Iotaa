@@ -350,7 +350,10 @@ def main():
     # ── Banking system (canonical module) ────────────────────────────
     from handlers.banking import (
         bank_cmd, deposit_cmd, withdraw_cmd, loan_cmd, repay_cmd,
-        transfer_cmd, savings_cmd, networth_cmd,
+        transfer_cmd, savings_cmd, networth_cmd, fd_cmd, rd_cmd,
+        statement_cmd, openbank_cmd, mybank_cmd, bankinfo_cmd, banks_cmd,
+        bankdeposit_cmd, bankwithdraw_cmd, setbankname_cmd, setbankrate_cmd,
+        closebank_cmd,
     )
     from handlers.marketplace import bazaar_cmd
 
@@ -437,6 +440,11 @@ def main():
         ("bank", bank_cmd), ("deposit", deposit_cmd), ("withdraw", withdraw_cmd),
         ("loan", loan_cmd), ("repay", repay_cmd), ("networth", networth_cmd),
         ("transfer", transfer_cmd), ("savings", savings_cmd),
+        ("fd", fd_cmd), ("rd", rd_cmd), ("statement", statement_cmd),
+        ("openbank", openbank_cmd), ("mybank", mybank_cmd), ("bankinfo", bankinfo_cmd),
+        ("banks", banks_cmd), ("bankdeposit", bankdeposit_cmd),
+        ("bankwithdraw", bankwithdraw_cmd), ("setbankname", setbankname_cmd),
+        ("setbankrate", setbankrate_cmd), ("closebank", closebank_cmd),
         ("lottery", lottery_cmd), ("bazaar", bazaar_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))

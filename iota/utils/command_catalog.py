@@ -487,6 +487,28 @@ CATALOG = {
     "osetbotname": ["Owner Systems", "Owner: set the bot's display name."],
     "opurge": ["Owner Systems", "Owner: purge N messages in any group."],
 
+    # ── Premium Banking (real-life style) ─────────────────────────────
+    "bank": ["Premium Banking", "Your bank account (safe from /rob) + overview."],
+    "deposit": ["Premium Banking", "Move coins wallet → bank."],
+    "withdraw": ["Premium Banking", "Move coins bank → wallet."],
+    "loan": ["Premium Banking", "Borrow coins (interest, due in 24h)."],
+    "repay": ["Premium Banking", "Repay an outstanding loan."],
+    "transfer": ["Premium Banking", "Send coins to another user."],
+    "savings": ["Premium Banking", "Interest-bearing savings vault (2%/day)."],
+    "networth": ["Premium Banking", "Total wealth (wallet+bank+savings−loan)."],
+    "fd": ["Premium Banking", "Fixed Deposit: lock coins, earn higher interest."],
+    "rd": ["Premium Banking", "Recurring Deposit: monthly installments + interest."],
+    "statement": ["Premium Banking", "Passbook: recent transactions."],
+    "openbank": ["Premium Banking", "Open your own Bank/Branch (need 10 lakh)."],
+    "mybank": ["Premium Banking", "Manage your owned bank."],
+    "bankinfo": ["Premium Banking", "View a bank's public info."],
+    "banks": ["Premium Banking", "List Iota's Banks/Branches."],
+    "bankdeposit": ["Premium Banking", "Deposit coins into a user-owned bank."],
+    "bankwithdraw": ["Premium Banking", "Withdraw from a user-owned bank."],
+    "setbankname": ["Premium Banking", "Rename your bank."],
+    "setbankrate": ["Premium Banking", "Set your bank's customer interest rate."],
+    "closebank": ["Premium Banking", "Close your bank (returns all deposits)."],
+
     # ── Misc ────────────────────────────────────────────────────────
     "start": ["Core", "Start / welcome message."],
     "help": ["Core", "Show help / command guide."],
@@ -514,9 +536,9 @@ CATALOG = {
 
 # Friendly display order for categories in the /commands menu.
 CATEGORY_ORDER = [
-    "Core", "Fun", "Romance", "Economy", "Premium", "Games", "Group Admin",
-    "Group Tools", "Anti-Abuse", "Utility", "Stickers", "Items", "Village",
-    "Stats", "Info", "Owner", "Owner Systems", "Legal", "Misc",
+    "Core", "Fun", "Romance", "Economy", "Premium", "Premium Banking", "Games",
+    "Group Admin", "Group Tools", "Anti-Abuse", "Utility", "Stickers", "Items",
+    "Village", "Stats", "Info", "Owner", "Owner Systems", "Legal", "Misc",
 ]
 
 

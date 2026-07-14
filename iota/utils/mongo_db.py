@@ -1,7 +1,12 @@
 """Iota Bot - MongoDB Async Database Layer (motor)"""
 import time, re, uuid
 from motor.motor_asyncio import AsyncIOMotorClient
-from config import MONGO_URI, DB_NAME
+from config import (
+    MONGO_URI, DB_NAME,
+    BANK_DAILY_RATE, PREMIUM_BANKING_CAP, FD_BREAK_PENALTY,
+    BANK_CUSTOMER_DAILY_RATE, BANK_OWNER_DEPOSIT_FEE, BANK_RATE_MIN,
+    BANK_RATE_MAX,
+)
 
 _client = None
 _db = None
@@ -1248,6 +1253,14 @@ async def create_indexes():
         await db.join_requests.create_index([("chat_id",1),("user_id",1)], unique=True)
         await db.join_requests.create_index([("chat_id",1),("date",1)])
     except Exception: pass
+    try:
+        await db.fixed_deposits.create_index([("uid",1)])
+        await db.fixed_deposits.create_index([("maturity_ts",1)])
+        await db.recurring_deposits.create_index([("uid",1)])
+        await db.recurring_deposits.create_index([("next_due_ts",1)])
+        await db.banks.create_index([("owner_id",1)])
+        await db.bank_txns.create_index([("uid",1),("ts",-1)])
+    except Exception: pass
     print("✅ MongoDB indexes created")
 
 
@@ -1433,6 +1446,411 @@ async def repay_loan(uid: int, amt: int) -> int:
             {"$inc": {"balance": -pay}, "$set": {"loan_amount": remaining}},
         )
     return pay
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🆕 PREMIUM BANKING SYSTEM (real-life style: bank interest, FD, RD, passbook,
+# and user-owned Banks/Branches). All of this is PREMIUM-ONLY — see the
+# premium gate in handlers/banking.py. Money is always moved atomically so
+# coins can never be created or destroyed except exactly as intended.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Passbook / transaction ledger ───────────────────────────────────────────
+async def add_bank_txn(uid: int, ttype: str, amount: int, note: str = "",
+                       counter=None):
+    """Append a transaction to the user's passbook. Never raises."""
+    try:
+        await get_db().bank_txns.insert_one({
+            "uid": uid, "type": ttype, "amount": int(amount),
+            "note": note or "", "counter": counter, "ts": int(time.time()),
+        })
+    except Exception:
+        logger.debug("add_bank_txn failed for %s", uid)
+
+
+async def get_bank_txns(uid: int, limit: int = 15) -> list:
+    cur = get_db().bank_txns.find({"uid": uid}).sort("ts", -1).limit(limit)
+    return await cur.to_list(length=limit)
+
+
+# ── Bank (demand deposit) interest ──────────────────────────────────────────
+async def accrue_bank_interest(rate: float = BANK_DAILY_RATE,
+                               cap: int = PREMIUM_BANKING_CAP) -> int:
+    """Credit daily interest on every non-empty bank balance (capped at the
+    premium banking cap). Returns number of balances updated."""
+    if rate <= 0:
+        return 0
+    db = get_db()
+    updated = 0
+    async for u in db.users.find({"bank": {"$gt": 0}}, {"_id": 1, "bank": 1}):
+        bal = u["bank"]
+        interest = int(bal * rate)
+        if interest <= 0:
+            continue
+        new_bal = min(bal + interest, cap)
+        if new_bal == bal:
+            continue
+        await db.users.update_one({"_id": u["_id"]}, {"$set": {"bank": new_bal}})
+        updated += 1
+    return updated
+
+
+# ── Fixed Deposits (FD) ─────────────────────────────────────────────────────
+async def create_fd(uid: int, principal: int, tenure_days: int,
+                     rate: float) -> object:
+    """Create a Fixed Deposit. Locks `principal` from the wallet atomically
+    (gated on balance >= principal) so coins can never be created or lost.
+    Returns the new FD document (with _id), or None if funds were
+    insufficient."""
+    db = get_db()
+    res = await db.users.update_one(
+        {"_id": uid, "balance": {"$gte": principal}},
+        {"$inc": {"balance": -principal}},
+    )
+    if res.modified_count == 0:
+        return None
+    now = int(time.time())
+    doc = {
+        "uid": uid, "principal": principal, "rate": rate,
+        "tenure_days": tenure_days, "created_at": now,
+        "maturity_ts": now + tenure_days * 86400, "status": "active",
+    }
+    res = await get_db().fixed_deposits.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return doc
+
+
+async def get_fd(fd_id) -> dict:
+    from bson import ObjectId
+    try:
+        if not isinstance(fd_id, ObjectId):
+            fd_id = ObjectId(fd_id)
+    except Exception:
+        return None
+    return await get_db().fixed_deposits.find_one({"_id": fd_id})
+
+
+async def list_fds(uid: int) -> list:
+    cur = get_db().fixed_deposits.find({"uid": uid, "status": "active"}).sort("maturity_ts", 1)
+    return await cur.to_list(length=50)
+
+
+def fd_payout(fd: dict) -> int:
+    """Compute the FD payout (principal + interest, capped at principal on
+    break). Pure function — does no DB work, so it is intentionally NOT async.
+    Caller credits the wallet with the returned amount.
+
+    An FD pays full principal+interest once its lock-in has ended (status
+    "matured", OR an "active" FD whose maturity_ts has passed). The early
+    break penalty only applies when the holder cashes out BEFORE maturity."""
+    principal = fd["principal"]
+    if fd.get("status") == "broken":
+        return principal
+    interest = int(principal * fd.get("rate", 0))
+    if fd.get("status") == "active" and fd.get("maturity_ts", 0) > int(time.time()):
+        # genuine premature break
+        elapsed = max(0, int(time.time()) - fd["created_at"])
+        progress = min(1.0, elapsed / (fd["tenure_days"] * 86400))
+        interest = int(principal * fd.get("rate", 0) * progress)
+        penalty = int((principal + interest) * FD_BREAK_PENALTY)
+        return max(principal, principal + interest - penalty)
+    return principal + interest  # matured (or lock-in already ended)
+
+
+async def settle_fd(fd_id, payout: int, status: str):
+    await get_db().fixed_deposits.update_one(
+        {"_id": fd_id}, {"$set": {"status": status}}
+    )
+    return payout
+
+
+async def process_fd_maturities() -> int:
+    """Mature every active FD whose lock-in has ended. Returns count."""
+    now = int(time.time())
+    db = get_db()
+    done = 0
+    async for fd in db.fixed_deposits.find(
+        {"status": "active", "maturity_ts": {"$lte": now}}
+    ):
+        payout = fd_payout(fd)
+        await db.users.update_one(
+            {"_id": fd["uid"]}, {"$inc": {"balance": payout}}
+        )
+        await add_bank_txn(fd["uid"], "fd_mature", payout,
+                           f"FD #{fd['_id']} matured")
+        await db.fixed_deposits.update_one(
+            {"_id": fd["_id"]}, {"$set": {"status": "matured"}}
+        )
+        done += 1
+    return done
+
+
+# ── Recurring Deposits (RD) ─────────────────────────────────────────────────
+async def create_rd(uid: int, installment: int, months: int,
+                     rate: float) -> object:
+    """Create a Recurring Deposit and lock the first installment from the
+    wallet atomically (gated on balance >= installment). Returns the new RD
+    document (with _id), or None if funds were insufficient."""
+    db = get_db()
+    res = await db.users.update_one(
+        {"_id": uid, "balance": {"$gte": installment}},
+        {"$inc": {"balance": -installment}},
+    )
+    if res.modified_count == 0:
+        return None
+    now = int(time.time())
+    # First installment is collected up-front (just deducted above).
+    doc = {
+        "uid": uid, "installment": installment, "months": months,
+        "paid": 1, "total": installment, "rate": rate,
+        "start_ts": now, "next_due_ts": now + 30 * 86400,
+        "maturity_ts": now + months * 30 * 86400, "status": "active",
+    }
+    res = await get_db().recurring_deposits.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return doc
+
+
+async def get_rd(rd_id) -> dict:
+    from bson import ObjectId
+    try:
+        if not isinstance(rd_id, ObjectId):
+            rd_id = ObjectId(rd_id)
+    except Exception:
+        return None
+    return await get_db().recurring_deposits.find_one({"_id": rd_id})
+
+
+async def list_rds(uid: int) -> list:
+    cur = get_db().recurring_deposits.find(
+        {"uid": uid, "status": "active"}
+    ).sort("maturity_ts", 1)
+    return await cur.to_list(length=50)
+
+
+def rd_payout(rd: dict) -> int:
+    """Maturity payout = total contributions + simple monthly interest.
+    Pure function (no DB work) so it is intentionally NOT async."""
+    if rd.get("status") == "broken":
+        return rd["total"]
+    interest = int(rd["total"] * rd.get("rate", 0) * rd["months"])
+    return rd["total"] + interest
+
+
+async def process_rd_installments() -> int:
+    """Collect the next RD installment for every due plan and mature plans
+    whose tenure is complete. Returns number of plans processed."""
+    now = int(time.time())
+    db = get_db()
+    processed = 0
+    async for rd in db.recurring_deposits.find({"status": "active"}):
+        if now < rd["next_due_ts"] and now < rd["maturity_ts"]:
+            continue
+        uid = rd["uid"]
+        # Collect installment if still within the plan and wallet allows.
+        if rd["paid"] < rd["months"] and now >= rd["next_due_ts"]:
+            u = await get_user(uid)
+            if u.get("balance", 0) >= rd["installment"]:
+                await db.users.update_one(
+                    {"_id": uid}, {"$inc": {"balance": -rd["installment"]}}
+                )
+                await add_bank_txn(uid, "rd_instalment", -rd["installment"],
+                                   f"RD #{rd['_id']} installment")
+                await db.recurring_deposits.update_one(
+                    {"_id": rd["_id"]},
+                    {"$inc": {"paid": 1, "total": rd["installment"]},
+                     "$set": {"next_due_ts": now + 30 * 86400}},
+                )
+                rd["paid"] += 1
+                rd["total"] += rd["installment"]
+        # Mature if tenure complete.
+        if now >= rd["maturity_ts"] or rd["paid"] >= rd["months"]:
+            payout = rd_payout(rd)
+            await db.users.update_one(
+                {"_id": uid}, {"$inc": {"balance": payout}}
+            )
+            await add_bank_txn(uid, "rd_mature", payout, f"RD #{rd['_id']} matured")
+            await db.recurring_deposits.update_one(
+                {"_id": rd["_id"]}, {"$set": {"status": "matured"}}
+            )
+        processed += 1
+    return processed
+
+
+# ── User-owned Banks / Branches ─────────────────────────────────────────────
+async def create_bank(owner_id: int, name: str, reserve: int) -> object:
+    """Open a bank. Locks `reserve` from the owner's wallet atomically
+    (gated on balance >= reserve) so the reserve can never be created out of
+    thin air. Returns the bank doc, or None if funds were insufficient."""
+    db = get_db()
+    res = await db.users.update_one(
+        {"_id": owner_id, "balance": {"$gte": reserve}},
+        {"$inc": {"balance": -reserve}},
+    )
+    if res.modified_count == 0:
+        return None
+    now = int(time.time())
+    doc = {
+        "owner_id": owner_id, "name": name[:40], "reserve": reserve,
+        "rate": BANK_CUSTOMER_DAILY_RATE, "msg": "",
+        "deposits": {}, "total_fees": 0, "created_at": now, "active": True,
+    }
+    res = await get_db().banks.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return doc
+
+
+async def get_bank_info(bank_id) -> dict:
+    from bson import ObjectId
+    try:
+        if not isinstance(bank_id, ObjectId):
+            bank_id = ObjectId(bank_id)
+    except Exception:
+        return None
+    return await get_db().banks.find_one({"_id": bank_id})
+
+
+async def list_banks(limit: int = 10) -> list:
+    cur = get_db().banks.find({"active": True}).sort("created_at", -1).limit(limit)
+    return await cur.to_list(length=limit)
+
+
+async def bank_deposit(bank_id, uid: int, amt: int) -> tuple:
+    """Customer deposits `amt` into a bank. Returns (ok, fee_earned)."""
+    if amt <= 0:
+        return False, 0
+    db = get_db()
+    bank = await get_bank_info(bank_id)
+    if not bank or not bank.get("active"):
+        return False, 0
+    # Deduct from customer wallet (gated), credit bank deposit pool.
+    res = await db.users.update_one(
+        {"_id": uid, "balance": {"$gte": amt}},
+        {"$inc": {"balance": -amt}},
+    )
+    if res.modified_count == 0:
+        return False, 0
+    uid_s = str(uid)
+    dep = bank["deposits"].get(uid_s, {"principal": 0, "acc_int": 0, "last_acc_ts": int(time.time())})
+    dep["principal"] = dep.get("principal", 0) + amt
+    fee = int(amt * BANK_OWNER_DEPOSIT_FEE)
+    await db.banks.update_one(
+        {"_id": bank_id},
+        {"$set": {f"deposits.{uid_s}": dep}, "$inc": {"total_fees": fee}},
+    )
+    # Owner earns the one-time deposit fee.
+    await db.users.update_one({"_id": bank["owner_id"]}, {"$inc": {"balance": fee}})
+    await add_bank_txn(uid, "bank_deposit", -amt, f"→ Bank: {bank['name']}")
+    return True, fee
+
+
+async def bank_withdraw(bank_id, uid: int, amt: int) -> tuple:
+    """Customer withdraws up to their principal+accrued interest. Returns
+    (ok, payout)."""
+    if amt <= 0:
+        return False, 0
+    db = get_db()
+    bank = await get_bank_info(bank_id)
+    if not bank or not bank.get("active"):
+        return False, 0
+    uid_s = str(uid)
+    dep = bank["deposits"].get(uid_s)
+    if not dep:
+        return False, 0
+    available = dep["principal"] + dep["acc_int"]
+    if available <= 0:
+        return False, 0
+    payout = min(amt, available)
+    ratio = payout / available
+    red_p = int(dep["principal"] * ratio)
+    red_i = payout - red_p
+    new_dep = {
+        "principal": dep["principal"] - red_p,
+        "acc_int": dep["acc_int"] - red_i,
+        "last_acc_ts": dep.get("last_acc_ts", int(time.time())),
+    }
+    if new_dep["principal"] <= 0 and new_dep["acc_int"] <= 0:
+        await db.banks.update_one({"_id": bank_id}, {"$unset": {f"deposits.{uid_s}": ""}})
+    else:
+        await db.banks.update_one({"_id": bank_id}, {"$set": {f"deposits.{uid_s}": new_dep}})
+    await db.users.update_one({"_id": uid}, {"$inc": {"balance": payout}})
+    await add_bank_txn(uid, "bank_withdraw", payout, f"← Bank: {bank['name']}")
+    return True, payout
+
+
+async def set_bank_profile(bank_id, owner_id: int, **fields) -> bool:
+    bank = await get_bank_info(bank_id)
+    if not bank or bank.get("owner_id") != owner_id or not bank.get("active"):
+        return False
+    upd = {}
+    if "name" in fields and fields["name"]:
+        upd["name"] = str(fields["name"])[:40]
+    if "msg" in fields and fields["msg"] is not None:
+        upd["msg"] = str(fields["msg"])[:300]
+    if "rate" in fields and fields["rate"] is not None:
+        r = float(fields["rate"])
+        upd["rate"] = min(BANK_RATE_MAX, max(BANK_RATE_MIN, r))
+    if upd:
+        await get_db().banks.update_one({"_id": bank_id}, {"$set": upd})
+        return True
+    return False
+
+
+async def close_bank(bank_id) -> dict:
+    """Close a bank: return the owner's reserve and every customer's
+    principal+interest, then deactivate. Returns a summary dict."""
+    db = get_db()
+    bank = await get_bank_info(bank_id)
+    if not bank or not bank.get("active"):
+        return {"ok": False}
+    # Return owner reserve.
+    await db.users.update_one(
+        {"_id": bank["owner_id"]}, {"$inc": {"balance": bank["reserve"]}}
+    )
+    await add_bank_txn(bank["owner_id"], "bank_close", bank["reserve"],
+                       f"Bank '{bank['name']}' closed — reserve returned")
+    # Return each customer's principal+interest.
+    returned = 0
+    for uid_s, dep in (bank.get("deposits") or {}).items():
+        amt = dep["principal"] + dep["acc_int"]
+        if amt <= 0:
+            continue
+        try:
+            uid = int(uid_s)
+        except Exception:
+            continue
+        await db.users.update_one({"_id": uid}, {"$inc": {"balance": amt}})
+        await add_bank_txn(uid, "bank_close", amt, f"Bank '{bank['name']}' closed")
+        returned += amt
+    await db.banks.update_one({"_id": bank_id}, {"$set": {"active": False}})
+    return {"ok": True, "reserve": bank["reserve"], "returned": returned,
+            "fees": bank.get("total_fees", 0)}
+
+
+async def accrue_bank_customer_interest() -> int:
+    """Credit daily interest to every bank customer's deposit. Returns the
+    number of banks processed."""
+    db = get_db()
+    now = int(time.time())
+    processed = 0
+    async for bank in db.banks.find({"active": True, "deposits.0": {"$exists": True}}):
+        changed = False
+        for uid_s, dep in list((bank.get("deposits") or {}).items()):
+            total = dep["principal"] + dep["acc_int"]
+            if total <= 0:
+                continue
+            interest = int(total * bank.get("rate", BANK_CUSTOMER_DAILY_RATE))
+            if interest <= 0:
+                continue
+            dep["acc_int"] = dep.get("acc_int", 0) + interest
+            dep["last_acc_ts"] = now
+            changed = True
+        if changed:
+            await db.banks.update_one(
+                {"_id": bank["_id"]}, {"$set": {"deposits": bank["deposits"]}}
+            )
+            processed += 1
+    return processed
 
 
 async def get_lottery_pool(chat_id: int) -> int:

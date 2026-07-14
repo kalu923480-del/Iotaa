@@ -23,7 +23,10 @@ from unittest.mock import patch
 # unrelated test failures (cross-test pollution), not a banking bug.
 _orig_config = sys.modules.get("config")
 sys.modules["config"] = types.SimpleNamespace(
-    MONGO_URI="mongodb://fake", DB_NAME="test"
+    MONGO_URI="mongodb://fake", DB_NAME="test",
+    BANK_DAILY_RATE=0.005, PREMIUM_BANKING_CAP=1_000_000,
+    FD_BREAK_PENALTY=0.10, BANK_CUSTOMER_DAILY_RATE=0.008,
+    BANK_OWNER_DEPOSIT_FEE=0.01, BANK_RATE_MIN=0.003, BANK_RATE_MAX=0.015,
 )
 
 from bson import ObjectId  # noqa: E402
