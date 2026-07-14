@@ -983,30 +983,6 @@ async def economystats_cmd(update, context):
 
 
 @owner_only
-async def toprich_cmd(update, context):
-    """List the richest users. /toprich [n=10]"""
-    n = 10
-    if context.args and context.args[0].isdigit():
-        n = max(1, min(50, int(context.args[0])))
-    db = get_db()
-    rows = await db.users.aggregate([
-        {"$match": {"is_banned": {"$ne": True}}},
-        {"$addFields": {"tb": {"$add": [{"$ifNull": ["$balance", 0]},
-                                        {"$ifNull": ["$wallet", 0]}]}}},
-        {"$sort": {"tb": -1}}, {"$limit": n},
-    ]).to_list(n)
-    if not rows:
-        await _reply(update, "📭 No users with balance.")
-        return
-    lines = [f"💰 <b>Top {len(rows)} richest</b>"]
-    for i, u in enumerate(rows, 1):
-        tot = (u.get("balance", 0) or 0) + (u.get("wallet", 0) or 0)
-        nm = u.get("full_name") or u.get("username") or str(u["_id"])
-        lines.append(f"{i}. {mention_id(u['_id'], safe_html(str(nm)))} — {fmt(tot)}")
-    await _reply(update, "\n".join(lines))
-
-
-@owner_only
 async def rain_cmd(update, context):
     """Rain coins to N random active users. /rain <amount> [count=20]"""
     if not context.args or not context.args[0].isdigit():
@@ -1291,10 +1267,10 @@ async def ownersys_cmd(update, context):
         "🤖 <b>Auto:</b> /autoreply /autoreplies /delautoreply /blackword /blackwords /delblackword\n"
         "📊 <b>Analytics:</b> /growth /retention /latency /health /pingall /deadgroups "
         "/online /commandstats /errorlog\n"
-        "🧑‍💼 <b>Staff:</b> /sudoadd /sudoremove /stafflist /transfer /whereis /common\n"
-        "💰 <b>Economy:</b> /economystats /toprich /rain /reseteco\n"
+        "🧑‍💼 <b>Staff:</b> /sudoadd /sudoremove /stafflist /handover /whereis /common\n"
+        "💰 <b>Economy:</b> /economystats /rain /reseteco\n"
         "🗄️ <b>Data:</b> /dbstats /exportcsv /backup /vacuum /indexes\n"
-        "🧠 <b>AI/Content:</b> /persona /defaultwelcome /forcewelcome /setbio /setmenu\n"
+        "🧠 <b>AI/Content:</b> /persona /defaultwelcome /forcewelcome /botbio /setmenu\n"
         "🔔 <b>Notify:</b> /logchat /notify /alert"
     )
 

@@ -169,7 +169,7 @@ class TestOwnerSystemsImports(unittest.TestCase):
             "pingall_cmd", "deadgroups_cmd", "online_cmd", "commandstats_cmd",
             "errorlog_cmd", "sudoadd_cmd", "sudoremove_cmd", "stafflist_cmd",
             "handover_cmd", "whereis_cmd", "common_cmd", "economystats_cmd",
-            "toprich_cmd", "rain_cmd", "reseteco_cmd", "dbstats_cmd",
+            "rain_cmd", "reseteco_cmd", "dbstats_cmd",
             "exportcsv_cmd", "backup_cmd", "vacuum_cmd", "indexes_cmd",
             "persona_cmd", "defaultwelcome_cmd", "forcewelcome_cmd", "botbio_cmd",
             "setmenu_cmd", "logchat_cmd", "notify_cmd", "alert_cmd", "ownersys_cmd",

@@ -468,7 +468,6 @@ CATALOG = {
     "stafflist": ["Owner Systems", "List staff."],
     "handover": ["Owner Systems", "Transfer ownership."],
     "economystats": ["Owner Systems", "Economy overview."],
-    "toprich": ["Owner Systems", "Richest users."],
     "rain": ["Owner Systems", "Rain coins to users."],
     "reseteco": ["Owner Systems", "Reset a user's economy."],
     "dbstats": ["Owner Systems", "Database statistics."],
