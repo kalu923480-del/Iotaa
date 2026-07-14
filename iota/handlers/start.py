@@ -5,6 +5,7 @@ from utils.mongo_db import ensure_user, get_user
 from utils.helpers import mention, fmt, xp_level, rank_title
 from utils.fonts import sc, bold_sc
 from utils.safe_html import safe_html
+from utils.dm_redirect import require_dm
 import logging
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,21 @@ _CASTLE_IMAGES = [
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     await ensure_user(u.id, u.username or "", u.full_name)
+
+    # 🆕 Deep-link routing: t.me/BOT?start=commands|pay|panel opens the
+    # matching feature directly once the user reaches the bot's DM.
+    if context.args:
+        payload = context.args[0].split("_")[0]
+        if payload == "commands":
+            from handlers.commands_list import commands_cmd
+            return await commands_cmd(update, context)
+        if payload == "pay":
+            from handlers.premium import pay_cmd
+            return await pay_cmd(update, context)
+        if payload == "panel":
+            from handlers.owner_panel import owner_panel_cmd
+            return await owner_panel_cmd(update, context)
+
     me = await context.bot.get_me()
 
     village_caption = (
@@ -273,6 +289,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 🆕 Long help is shown in DM; in groups, redirect with a clickable button.
+    if not await require_dm(update, context, "/help", "commands"):
+        return
     u = update.effective_user
     me = await context.bot.get_me()
     await update.message.reply_html(

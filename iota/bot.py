@@ -122,6 +122,7 @@ def main():
 
     # ── Imports ───────────────────────────────────────────────────────
     from handlers.start        import start_cmd, help_cmd, menu_callback
+    from handlers.commands_list import commands_cmd, commands_callback
     from handlers.economy      import (
         daily_cmd, bal_cmd, rob_cmd, kill_cmd, revive_cmd, protect_cmd,
         give_cmd, toprich_cmd, topkill_cmd, wallet_cmd, rank_cmd, pfp_cmd,
@@ -267,6 +268,20 @@ def main():
         refreshmodels_cmd, setmaxtokens_cmd, addapikey_cmd,
         removeapikey_cmd, keypoolstatus_cmd, providerstatus_cmd,
         setpriority_cmd, toggleprovider_cmd
+    )
+    from handlers.owner_newsys import (
+        lockdown_cmd, unlock_cmd, slowall_cmd, lockall_cmd, unlockall_cmd,
+        shieldstatus_cmd, massban_cmd, massunban_cmd, banfrom_cmd, unbanfrom_cmd,
+        cleanbots_cmd, botgate_cmd, allowedbots_cmd, watchuser_cmd, unwatch_cmd,
+        watchlist_cmd, suslist_cmd, schedbroadcast_cmd, schedmsg_cmd, remindall_cmd,
+        scheds_cmd, cancelsched_cmd, autoreply_cmd, autoreplies_cmd, delautoreply_cmd,
+        blackword_cmd, blackwords_cmd, delblackword_cmd, growth_cmd, retention_cmd,
+        latency_cmd, health_cmd, pingall_cmd, deadgroups_cmd, online_cmd,
+        commandstats_cmd, errorlog_cmd,         sudoadd_cmd, sudoremove_cmd, stafflist_cmd,
+        handover_cmd, whereis_cmd, common_cmd, economystats_cmd, toprich_cmd,
+        rain_cmd, reseteco_cmd, dbstats_cmd, exportcsv_cmd, backup_cmd, vacuum_cmd,
+        indexes_cmd, persona_cmd, defaultwelcome_cmd, forcewelcome_cmd, botbio_cmd,
+        setmenu_cmd, logchat_cmd, notify_cmd, alert_cmd, ownersys_cmd,
     )
     from handlers.sticker_reply import (
         sticker_reply_handler, gif_reply_handler,
@@ -712,6 +727,68 @@ def main():
     ]:
         app.add_handler(CommandHandler(c, f))
 
+    # ── 🆕 Owner Systems (new powerful subsystems) ────────────────────
+    for c, f in [
+        ("ownersys",ownersys_cmd),("lockdown",lockdown_cmd),("unlock",unlock_cmd),
+        ("slowall",slowall_cmd),("lockall",lockall_cmd),("unlockall",unlockall_cmd),
+        ("shieldstatus",shieldstatus_cmd),
+        ("massban",massban_cmd),("massunban",massunban_cmd),("banfrom",banfrom_cmd),
+        ("unbanfrom",unbanfrom_cmd),("cleanbots",cleanbots_cmd),
+        ("botgate",botgate_cmd),("allowedbots",allowedbots_cmd),
+        ("watchuser",watchuser_cmd),("unwatch",unwatch_cmd),("watchlist",watchlist_cmd),
+        ("suslist",suslist_cmd),
+        ("schedbroadcast",schedbroadcast_cmd),("schedmsg",schedmsg_cmd),
+        ("remindall",remindall_cmd),("scheds",scheds_cmd),("cancelsched",cancelsched_cmd),
+        ("autoreply",autoreply_cmd),("autoreplies",autoreplies_cmd),
+        ("delautoreply",delautoreply_cmd),
+        ("blackword",blackword_cmd),("blackwords",blackwords_cmd),
+        ("delblackword",delblackword_cmd),
+        ("growth",growth_cmd),("retention",retention_cmd),("latency",latency_cmd),
+        ("health",health_cmd),("pingall",pingall_cmd),("deadgroups",deadgroups_cmd),
+        ("online",online_cmd),("commandstats",commandstats_cmd),("errorlog",errorlog_cmd),
+        ("sudoadd",sudoadd_cmd),("sudoremove",sudoremove_cmd),("stafflist",stafflist_cmd),
+        ("handover",handover_cmd),("whereis",whereis_cmd),("common",common_cmd),
+        ("economystats",economystats_cmd),("toprich",toprich_cmd),("rain",rain_cmd),
+        ("reseteco",reseteco_cmd),
+        ("dbstats",dbstats_cmd),("exportcsv",exportcsv_cmd),("backup",backup_cmd),
+        ("vacuum",vacuum_cmd),("indexes",indexes_cmd),
+        ("persona",persona_cmd),("defaultwelcome",defaultwelcome_cmd),
+        ("forcewelcome",forcewelcome_cmd),("botbio",botbio_cmd),("setmenu",setmenu_cmd),
+        ("logchat",logchat_cmd),("notify",notify_cmd),("alert",alert_cmd),
+        # Master command catalog + /payment DM-only alias
+        ("commands",commands_cmd),("payment",pay_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── Passive owner-systems enforcement (auto-reply / blackwords / bot-gate)
+    from handlers.owner_newsys import (
+        autoreply_handler, blackword_handler, botgate_handler,
+    )
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS, botgate_handler
+    ), group=2)
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, blackword_handler
+    ), group=2)
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, autoreply_handler
+    ), group=2)
+
+    # ── Command-usage analytics (feeds /commandstats) ───────────────────
+    # Runs alongside the real command handlers; just counts invocations.
+    async def _track_command_stat(update, context):
+        try:
+            msg = update.effective_message
+            if not msg or not msg.text or not msg.text.startswith("/"):
+                return
+            cmd = msg.text[1:].split("@", 1)[0].split(" ", 1)[0].lower()
+            if cmd:
+                from utils.mongo_db import bump_command_stat
+                await bump_command_stat(cmd)
+        except Exception:
+            pass
+    app.add_handler(MessageHandler(filters.COMMAND, _track_command_stat), group=-1)
+
     # ── Dot/Bang Admin prefix ─────────────────────────────────────────
     app.add_handler(MessageHandler(
         filters.TEXT & filters.Regex(
@@ -764,6 +841,9 @@ def main():
     app.add_handler(CallbackQueryHandler(marry_callback,        pattern=r"^marry_"))
     app.add_handler(CallbackQueryHandler(trivia_callback,       pattern=r"^trivia_"))
     app.add_handler(CallbackQueryHandler(welcome_panel_callback, pattern=r"^wset_"))
+    # 🆕 Master /commands catalog navigation (category menu + file download)
+    from handlers.commands_list import commands_callback
+    app.add_handler(CallbackQueryHandler(commands_callback, pattern=r"^cmds_"))
     app.add_handler(CallbackQueryHandler(werewolf_callback,      pattern=r"^ww_"))
     app.add_handler(CallbackQueryHandler(connect_callback,       pattern=r"^conn_"))
     app.add_handler(CallbackQueryHandler(whisper_read_callback,   pattern=r"^wsp:"))
@@ -870,6 +950,18 @@ def main():
                 return
             _identity_last_checked[u.id] = now_ts
             await ensure_user(u.id, u.username or "", u.full_name)
+            # Track last-seen so /retention, /online and similar analytics
+            # are meaningful.
+            try:
+                from utils.mongo_db import get_db, is_watched, touch_watched_activity
+                await get_db().users.update_one(
+                    {"_id": u.id}, {"$set": {"last_seen": int(now_ts)}}, upsert=False
+                )
+                # Watched users: record their latest activity for /watchlist.
+                if await is_watched(u.id):
+                    await touch_watched_activity(u.id, update.effective_chat.id)
+            except Exception:
+                pass
             # If they're messaging the bot in DM right now, they can
             # obviously receive DMs again — clear any stale "unreachable"
             # flag from a past broadcast so future broadcasts include them.
@@ -1161,6 +1253,10 @@ def main():
         await rehydrate_schedules(application)
         # Periodic RSS feed checker (posts new items to subscribed chats).
         asyncio.create_task(rss_check_loop(application))
+        # 🆕 Owner-systems scheduler: fires /schedbroadcast, /schedmsg and
+        # /remindall jobs when their due time arrives.
+        from handlers.owner_newsys import run_scheduler_iteration
+        asyncio.create_task(_scheduler_job(application.bot))
 
         # 🎲 Sweep abandoned game lobbies so in-memory state can't leak.
         from utils.game_lobby import lobby_expiry_job
@@ -1295,6 +1391,13 @@ async def _track_group_membership(update: Update, context: ContextTypes.DEFAULT_
     not), so it becomes reachable by broadcasts/announces and welcome. Marks
     it inactive when the bot leaves. Best-effort: any DB error is swallowed so
     this never interferes with normal message handling.
+
+    Also tracks whether the bot currently holds admin rights (`bot_is_admin`),
+    because a NON-admin bot cannot receive `new_chat_members` / `left_chat_member`
+    service messages from Telegram — so welcome, goodbye, captcha, anti-raid,
+    etc. silently CANNOT work until the bot is promoted. When the bot is added
+    without admin we send a one-time onboarding note explaining exactly that,
+    and when it IS admin (or gets promoted later) we confirm it's ready.
     """
     mcu = update.my_chat_member
     if not mcu:
@@ -1304,17 +1407,86 @@ async def _track_group_membership(update: Update, context: ContextTypes.DEFAULT_
         return
     status = getattr(mcu.new_chat_member, "status", None)
     try:
-        from utils.mongo_db import ensure_group_settings, set_group_inactive
+        from utils.mongo_db import (
+            ensure_group_settings, set_group_inactive, get_group_settings,
+        )
         if status in ("member", "administrator", "creator"):
-            await ensure_group_settings(chat.id, chat.title or "")
-            logger.info(f"📥 Tracked new group {chat.id} ({chat.title})")
+            is_admin = status in ("administrator", "creator")
+            # Was this an already-tracked/active group (e.g. a routine
+            # member-status refresh), or a genuine new join / re-join?
+            prev = await get_group_settings(chat.id)
+            was_active = bool(prev and prev.get("active"))
+            await ensure_group_settings(
+                chat.id, chat.title or "", active=True, bot_is_admin=is_admin
+            )
+            logger.info(
+                f"📥 Tracked group {chat.id} ({chat.title}) — admin={is_admin}"
+            )
+            # Only greet on a real new join / re-join (not on every
+            # status refresh), so the group isn't spammed.
+            if not was_active:
+                await _send_group_onboarding(context, chat.id, is_admin, chat.title)
         elif status in ("left", "kicked"):
             await set_group_inactive(chat.id)
     except Exception:
         logger.debug("group auto-tracking failed", exc_info=True)
 
 
+async def _send_group_onboarding(context: ContextTypes.DEFAULT_TYPE, cid: int,
+                                 is_admin: bool, title: str):
+    """One-time note when the bot is added to a group.
+
+    A non-admin bot cannot see new-member joins, so we tell the admins up
+    front exactly why welcome/anti-spam won't fire and how to enable them.
+    """
+    from utils.safe_html import safe_html
+    t = safe_html(title or "this group")
+    if is_admin:
+        text = (
+            f"👋 <b>Hey {t}!</b>\n\n"
+            f"I'm <b>Iota</b> and I have admin rights here ✅\n"
+            f"Welcome messages, anti-spam, captcha, anti-raid and more are "
+            f"ready to go.\n\n"
+            f"• Customise welcome: <code>/setwelcome</code>\n"
+            f"• Set rules: <code>/setrules</code>\n"
+            f"• Full admin help: <code>/help</code>"
+        )
+    else:
+        text = (
+            f"👋 <b>Hey {t}!</b>\n\n"
+            f"I was added <b>without admin rights</b>, so right now I can only "
+            f"read commands. Telegram does <b>not</b> send bots the "
+            f"\"new member joined\" event unless they are an admin — which means "
+            f"<b>welcome messages, goodbye, captcha and anti-raid will NOT work</b> "
+            f"in this mode.\n\n"
+            f"🔧 <b>To enable everything:</b> promote me to admin "
+            f"(even with the <i>least</i> privileges — just the admin badge is "
+            f"enough for welcome/captcha).\n\n"
+            f"Until then I'll still respond to commands like "
+            f"<code>/help</code> and <code>/setwelcome</code>."
+        )
+    try:
+        from utils.telegram_safe import safe_call
+        await safe_call(
+            lambda: context.bot.send_message(cid, text, parse_mode="HTML"),
+            label="onboarding",
+        )
+    except Exception:
+        pass
+
+
 # ── Background jobs ────────────────────────────────────────────────────────────
+
+async def _scheduler_job(bot):
+    """Run due scheduled owner jobs every ~15s. Self-healing loop."""
+    from handlers.owner_newsys import run_scheduler_iteration
+    while True:
+        try:
+            await asyncio.sleep(15)
+            await run_scheduler_iteration(bot)
+        except Exception:
+            logger.debug("scheduler job loop error", exc_info=True)
+
 
 async def _memory_cleanup_job():
     """Delete AI memories older than 30 days — runs daily."""

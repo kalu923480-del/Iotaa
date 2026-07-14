@@ -32,6 +32,7 @@ from utils.ai_provider import (get_all_models, get_current_models,
                                  set_model, save_model_config_db)
 from utils.safe_html import safe_html, placeholder
 from utils.telegram_safe import safe_call
+from utils.dm_redirect import require_dm
 # Re-use Iota's existing emoji→mood detection so auto-decided moods line up
 # with what the sticker-reply system already understands
 # (handlers/sticker_reply.py).
@@ -47,6 +48,28 @@ def _own(uid: int) -> bool:
     Telegram always gives us update.effective_user.id as an int — so this
     comparison is type-safe with no casting needed."""
     return int(uid) == int(OWNER_ID)
+
+
+async def _is_privileged(uid: int) -> bool:
+    """
+    True if the caller is the owner (config OWNER_ID, or a runtime owner
+    transfer stored in MongoDB) OR a sudo staff member. Drives the owner
+    panel so /sudoadd staff can co-manage the bot and /transfer can hand
+    ownership over at runtime.
+    """
+    uid = int(uid)
+    if uid == int(OWNER_ID):
+        return True
+    try:
+        from utils.mongo_db import get_owner_override, is_sudo
+        ov = await get_owner_override()
+        if ov and ov == uid:
+            return True
+        if await is_sudo(uid):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def owner_only(func):
@@ -71,7 +94,7 @@ def owner_only(func):
 
         logger.info(f"🔑 Owner-panel call: {cmd_name} by user_id={u.id} (@{u.username})")
 
-        if not _own(u.id):
+        if not await _is_privileged(u.id):
             logger.warning(
                 f"🚫 {cmd_name}: REJECTED — user_id={u.id} is not the owner "
                 f"(OWNER_ID={OWNER_ID})"
@@ -135,6 +158,10 @@ def owner_only(func):
 
 @owner_only
 async def owner_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 🆕 Owner panel is private — only meaningful in DM. In a group, point
+    # the owner to their DM with a clickable button.
+    if not await require_dm(update, context, "/panel", "panel"):
+        return
     cfg = get_current_models()
     db = get_db()
     tu = await total_users()
@@ -193,7 +220,10 @@ async def owner_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/scan {placeholder('user_id')} — Full user scan\n"
         f"/resetuser {placeholder('user_id')} — Reset all data\n"
         f"/giveall {placeholder('amount')} — Give coins to all\n"
-        f"/maintenance on|off"
+        f"/maintenance on|off\n\n"
+        f"🆕 <b>50+ NEW Power Systems:</b> /ownersys\n"
+        f"(Shield · Anti-Abuse · Scheduling · Auto-Reply · Blacklist · Analytics · "
+        f"Staff · Economy · Data · AI/Content · Notifications)"
     )
 
 
@@ -784,6 +814,8 @@ async def dm_cmd(update, context):
 
 @owner_only
 async def stats_cmd(update, context):
+    if not await require_dm(update, context, "/botstats", "panel"):
+        return
     db = get_db(); tu = await total_users()
     pu = await db.users.count_documents({"is_premium": True})
     bu = await db.users.count_documents({"is_banned": True})
@@ -807,6 +839,8 @@ async def stats_cmd(update, context):
 
 @owner_only
 async def stars_stats_cmd(update, context):
+    if not await require_dm(update, context, "/botstats", "panel"):
+        return
     db = get_db()
     total_stars = await get_stars_total()
     count = await db.stars_payments.count_documents({})
@@ -1081,6 +1115,8 @@ async def toggleprovider_cmd(update, context):
 
 @owner_only
 async def scan_cmd(update, context):
+    if not await require_dm(update, context, "/scan", "panel"):
+        return
     """Full user scan — owner-only secret command."""
     if not context.args:
         await update.message.reply_html(f"Usage: /scan {placeholder('uid')}"); return
@@ -1157,6 +1193,8 @@ _maintenance = False
 
 @owner_only
 async def premiumlist_cmd(update, context):
+    if not await require_dm(update, context, "/premiumlist", "panel"):
+        return
     """
     Owner: list all premium users with names — paginated (20 per page)
     since a popular bot could have hundreds of premium users and dumping
@@ -1198,6 +1236,8 @@ async def premiumlist_cmd(update, context):
 
 @owner_only
 async def userslist_cmd(update, context):
+    if not await require_dm(update, context, "/userslist", "panel"):
+        return
     """
     Owner: list all users with names — paginated (20 per page), sorted
     by balance so the most active players surface first.

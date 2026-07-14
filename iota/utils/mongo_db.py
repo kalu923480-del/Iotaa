@@ -317,7 +317,8 @@ DEFAULT_GROUP_SETTINGS = {
 }
 
 
-async def ensure_group_settings(cid: int, title: str = "", active: bool = True):
+async def ensure_group_settings(cid: int, title: str = "", active: bool = True,
+                                bot_is_admin: bool = None):
     """
     Make sure a chat has a complete group_settings doc so it shows up in
     group broadcasts and advanced-admin features work. Uses $setOnInsert so
@@ -327,6 +328,12 @@ async def ensure_group_settings(cid: int, title: str = "", active: bool = True):
     the my_chat_member handler in bot.py — previously groups were only
     created lazily when an admin ran an advanced-admin command, so
     non-admin groups were invisible to /broadcast and similar.
+
+    `bot_is_admin` records whether the bot currently holds admin rights in
+    the chat. This drives the welcome/anti-spam "needs admin" warnings and
+    the group join onboarding message (a non-admin bot cannot receive
+    new_chat_members service messages, so it literally cannot welcome new
+    members until it is promoted).
     """
     doc = dict(DEFAULT_GROUP_SETTINGS)
     doc["tracked_at"] = now()
@@ -336,6 +343,12 @@ async def ensure_group_settings(cid: int, title: str = "", active: bool = True):
     await get_db().group_settings.update_one(
         {"_id": cid}, {"$setOnInsert": doc}, upsert=True
     )
+    # Keep the live admin-status flag in sync (separate $set so it never
+    # clobbers the $setOnInsert defaults above). None = "unknown, don't touch".
+    if bot_is_admin is not None:
+        await get_db().group_settings.update_one(
+            {"_id": cid}, {"$set": {"bot_is_admin": bool(bot_is_admin)}}
+        )
     # Welcome defaults so the welcome system has something to read.
     await get_db().welcome_settings.update_one(
         {"_id": cid},
@@ -345,11 +358,366 @@ async def ensure_group_settings(cid: int, title: str = "", active: bool = True):
     return await get_db().group_settings.find_one({"_id": cid})
 
 
+async def get_group_settings(cid: int):
+    """Return a group_settings doc (or None) for a chat id."""
+    return await get_db().group_settings.find_one({"_id": cid})
+
+
+async def is_bot_admin_in_group(cid: int) -> bool:
+    """
+    Best-effort check of whether the bot currently holds admin rights in a
+    chat. Returns False if unknown / not tracked / any error (fail-closed so
+    we never *assume* the bot is an admin when it isn't).
+    """
+    try:
+        g = await get_group_settings(cid)
+        if g and isinstance(g.get("bot_is_admin"), bool):
+            return g["bot_is_admin"]
+    except Exception:
+        pass
+    return False
+
+
 async def set_group_inactive(cid: int):
     """Mark a group the bot has left so it stops receiving broadcasts."""
     await get_db().group_settings.update_one(
         {"_id": cid}, {"$set": {"active": False}}
     )
+
+
+# ── Owner systems (new powerful owner-panel subsystems) ────────────────────
+#
+# All of these use schemaless MongoDB collections so adding a new subsystem
+# never requires a migration. Every function is fail-soft: a DB error returns
+# a safe default rather than raising into the owner command that called it.
+
+# ── Owner override + sudo staff ──────────────────────────────────────────
+
+async def get_owner_override() -> int:
+    """If ownership was transferred at runtime, return the new owner id."""
+    try:
+        d = await get_db().bot_config.find_one({"_id": "owner_override"})
+        if d and isinstance(d.get("uid"), int):
+            return d["uid"]
+    except Exception:
+        pass
+    return 0
+
+
+async def set_owner_override(uid: int):
+    await get_db().bot_config.update_one(
+        {"_id": "owner_override"}, {"$set": {"uid": int(uid)}}, upsert=True
+    )
+
+
+async def list_sudo() -> list:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "sudo_users"})
+        if d and isinstance(d.get("uids"), list):
+            return [int(x) for x in d["uids"]]
+    except Exception:
+        pass
+    return []
+
+
+async def add_sudo(uid: int):
+    uids = set(await list_sudo()); uids.add(int(uid))
+    await get_db().bot_config.update_one(
+        {"_id": "sudo_users"}, {"$set": {"uids": list(uids)}}, upsert=True
+    )
+
+
+async def remove_sudo(uid: int):
+    uids = set(await list_sudo()); uids.discard(int(uid))
+    await get_db().bot_config.update_one(
+        {"_id": "sudo_users"}, {"$set": {"uids": list(uids)}}, upsert=True
+    )
+
+
+async def is_sudo(uid: int) -> bool:
+    return int(uid) in (await list_sudo())
+
+
+# ── Global lockdown / shield state ──────────────────────────────────────
+
+async def get_shield() -> dict:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "shield"})
+        if d:
+            d.pop("_id", None); return d
+    except Exception:
+        pass
+    return {"lockdown": False, "reason": "", "slowmode": 0, "media_locked": False}
+
+
+async def set_shield(**kw):
+    await get_db().bot_config.update_one(
+        {"_id": "shield"}, {"$set": kw}, upsert=True
+    )
+
+
+# ── Scheduled jobs ──────────────────────────────────────────────────────
+
+async def add_scheduled_job(kind: str, run_at: int, payload: dict) -> str:
+    from uuid import uuid4
+    jid = uuid4().hex[:10]
+    await get_db().scheduled_jobs.insert_one(
+        {"_id": jid, "kind": kind, "run_at": run_at, "payload": payload,
+         "created_at": now(), "done": False}
+    )
+    return jid
+
+
+async def list_scheduled_jobs(limit: int = 50):
+    return await get_db().scheduled_jobs.find(
+        {"done": False}, sort=[("run_at", 1)], limit=limit
+    ).to_list(limit)
+
+
+async def get_due_jobs():
+    return await get_db().scheduled_jobs.find(
+        {"done": False, "run_at": {"$lte": now()}}
+    ).to_list(200)
+
+
+async def mark_job_done(jid: str):
+    await get_db().scheduled_jobs.update_one(
+        {"_id": jid}, {"$set": {"done": True}}
+    )
+
+
+async def cancel_scheduled_job(jid: str) -> bool:
+    r = await get_db().scheduled_jobs.update_one(
+        {"_id": jid, "done": False}, {"$set": {"done": True}}
+    )
+    return r.modified_count > 0
+
+
+# ── Global auto-reply rules ─────────────────────────────────────────────
+
+async def add_autoreply(trigger: str, response: str) -> str:
+    from uuid import uuid4
+    rid = uuid4().hex[:8]
+    await get_db().autoreplies.insert_one(
+        {"_id": rid, "trigger": trigger.lower(), "response": response,
+         "created_at": now()}
+    )
+    return rid
+
+
+async def list_autoreplies(limit: int = 100):
+    return await get_db().autoreplies.find({}).to_list(limit)
+
+
+async def del_autoreply(rid: str) -> bool:
+    r = await get_db().autoreplies.delete_one({"_id": rid})
+    return r.deleted_count > 0
+
+
+# ── Global blacklist words ──────────────────────────────────────────────
+
+async def add_blackword(word: str):
+    w = word.lower()
+    await get_db().blackwords.update_one(
+        {"_id": w}, {"$set": {"word": w}}, upsert=True
+    )
+
+
+async def list_blackwords(limit: int = 500):
+    return await get_db().blackwords.find({}).to_list(limit)
+
+
+async def del_blackword(word: str) -> bool:
+    r = await get_db().blackwords.delete_one({"_id": word.lower()})
+    return r.deleted_count > 0
+
+
+# ── Watched users ───────────────────────────────────────────────────────
+
+async def add_watch(uid: int, note: str = ""):
+    await get_db().watchlist.update_one(
+        {"_id": int(uid)},
+        {"$set": {"note": note, "since": now()}}, upsert=True
+    )
+
+
+async def remove_watch(uid: int) -> bool:
+    r = await get_db().watchlist.delete_one({"_id": int(uid)})
+    return r.deleted_count > 0
+
+
+async def list_watch(limit: int = 200):
+    return await get_db().watchlist.find({}).to_list(limit)
+
+
+async def is_watched(uid: int) -> bool:
+    try:
+        d = await get_db().watchlist.find_one({"_id": int(uid)})
+        return d is not None
+    except Exception:
+        return False
+
+
+async def touch_watched_activity(uid: int, chat_id: int):
+    """Record a watched user's latest activity (called from middleware)."""
+    try:
+        await get_db().watchlist.update_one(
+            {"_id": int(uid)},
+            {"$set": {"last_active": now(), "last_chat": int(chat_id)}},
+            upsert=False,
+        )
+    except Exception:
+        pass
+
+
+# ── Allowed-bots gate ───────────────────────────────────────────────────
+
+async def list_allowed_bots() -> list:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "allowed_bots"})
+        if d and isinstance(d.get("usernames"), list):
+            return [str(x).lower() for x in d["usernames"]]
+    except Exception:
+        pass
+    return []
+
+
+async def set_allowed_bots(usernames: list):
+    await get_db().bot_config.update_one(
+        {"_id": "allowed_bots"},
+        {"$set": {"usernames": [str(x).lower() for x in usernames]}},
+        upsert=True,
+    )
+
+
+async def get_botgate_mode() -> str:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "botgate"})
+        return d.get("mode", "off") if d else "off"
+    except Exception:
+        return "off"
+
+
+async def set_botgate_mode(mode: str):
+    await get_db().bot_config.update_one(
+        {"_id": "botgate"}, {"$set": {"mode": mode}}, upsert=True
+    )
+
+
+# ── Owner log channel + notify toggle ───────────────────────────────────
+
+async def get_log_chat() -> int:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "log_chat"})
+        if d and isinstance(d.get("chat_id"), int):
+            return d["chat_id"]
+    except Exception:
+        pass
+    return 0
+
+
+async def set_log_chat(chat_id: int):
+    await get_db().bot_config.update_one(
+        {"_id": "log_chat"}, {"$set": {"chat_id": int(chat_id)}}, upsert=True
+    )
+
+
+async def get_notify() -> bool:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "notify"})
+        return bool(d.get("on", True)) if d else True
+    except Exception:
+        return True
+
+
+async def set_notify(on: bool):
+    await get_db().bot_config.update_one(
+        {"_id": "notify"}, {"$set": {"on": bool(on)}}, upsert=True
+    )
+
+
+# ── Bot persona + global default welcome ────────────────────────────────
+
+async def get_persona() -> str:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "persona"})
+        return d.get("text", "") if d else ""
+    except Exception:
+        return ""
+
+
+async def set_persona(text: str):
+    await get_db().bot_config.update_one(
+        {"_id": "persona"}, {"$set": {"text": text}}, upsert=True
+    )
+
+
+async def get_default_welcome() -> str:
+    try:
+        d = await get_db().bot_config.find_one({"_id": "default_welcome"})
+        return d.get("text", "") if d else ""
+    except Exception:
+        return ""
+
+
+async def set_default_welcome(text: str):
+    await get_db().bot_config.update_one(
+        {"_id": "default_welcome"}, {"$set": {"text": text}}, upsert=True
+    )
+
+
+# ── Command usage stats ──────────────────────────────────────────────────
+
+async def bump_command_stat(cmd: str):
+    try:
+        await get_db().command_usage.update_one(
+            {"_id": cmd}, {"$inc": {"count": 1}}, upsert=True
+        )
+    except Exception:
+        pass
+
+
+async def top_commands(limit: int = 20):
+    return await get_db().command_usage.find({}).sort("count", -1).limit(limit).to_list(limit)
+
+
+# ── Error log (lightweight, kept short) ─────────────────────────────────
+
+async def log_error_entry(text: str):
+    try:
+        await get_db().error_log.insert_one({"t": now(), "msg": text})
+        # keep the collection bounded to the latest 200 entries
+        count = await get_db().error_log.count_documents({})
+        if count > 200:
+            excess = await get_db().error_log.find({}, {"_id": 1}).sort("t", 1).to_list(count - 200)
+            ids = [e["_id"] for e in excess]
+            if ids:
+                await get_db().error_log.delete_many({"_id": {"$in": ids}})
+    except Exception:
+        pass
+
+
+async def recent_errors(limit: int = 20):
+    return await get_db().error_log.find({}).sort("t", -1).limit(limit).to_list(limit)
+
+
+# ── Economy overview helpers ────────────────────────────────────────────
+
+async def total_balance_in_circulation() -> int:
+    try:
+        res = await get_db().users.aggregate([
+            {"$match": {"is_banned": {"$ne": True}}},
+            {"$group": {"_id": None,
+                        "bal": {"$sum": {"$ifNull": ["$balance", 0]}},
+                        "wal": {"$sum": {"$ifNull": ["$wallet", 0]}},
+                        "gem": {"$sum": {"$ifNull": ["$gems", 0]}}}},
+        ]).to_list(1)
+        if res:
+            return res[0]
+    except Exception:
+        pass
+    return {"bal": 0, "wal": 0, "gem": 0}
+
 
 # ── Card rank ────────────────────────────────────────────────────────
 

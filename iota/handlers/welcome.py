@@ -24,6 +24,22 @@ WELCOME_TEXTS = [
 WELCOME_STICKER_IDS: list = []  # Add Telegram sticker file_ids here
 
 
+async def _bot_has_admin(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
+    """Best-effort check of whether the bot holds admin rights in a chat."""
+    try:
+        me = await context.bot.get_me()
+        m = await context.bot.get_chat_member(chat_id, me.id)
+        return m.status in ("administrator", "creator")
+    except Exception:
+        # Fall back to the persisted flag (kept fresh by the my_chat_member
+        # auto-tracking handler in bot.py).
+        try:
+            from utils.mongo_db import is_bot_admin_in_group
+            return await is_bot_admin_in_group(chat_id)
+        except Exception:
+            return False
+
+
 # ── New member handler ────────────────────────────────────────────────────────
 
 async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,6 +159,17 @@ async def setwelcome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_html("❌ Admins only!"); return
 
+    # A non-admin bot cannot receive Telegram's "new member joined" service
+    # message, so welcome will silently never fire. Warn clearly so the admin
+    # knows to promote the bot instead of thinking the feature is broken.
+    if not await _bot_has_admin(context, chat.id):
+        await update.message.reply_html(
+            "⚠️ <b>Heads up:</b> I'm <b>not an admin</b> in this group. "
+            "Telegram won't send me the \"new member joined\" event unless I'm "
+            "an admin, so <b>welcome messages will NOT trigger</b> until you "
+            "promote me to admin (even with the least privileges)."
+        )
+
     args = context.args
 
     # No args → show the interactive panel (preferred, professional UX).
@@ -192,7 +219,15 @@ async def welcome_panel_callback(update: Update, context: ContextTypes.DEFAULT_T
     ws = await get_welcome_settings(chat_id)
 
     if action == "toggle":
-        await set_welcome_settings(chat_id, enabled=not ws.get("enabled", True))
+        new_state = not ws.get("enabled", True)
+        await set_welcome_settings(chat_id, enabled=new_state)
+        if new_state and not await _bot_has_admin(context, chat_id):
+            await q.answer(
+                "Enabled — but I'm NOT an admin here, so welcome won't "
+                "actually fire. Promote me to admin to activate it.",
+                show_alert=True
+            )
+            # fall through to refresh the panel so the change is visible
     elif action == "gif":
         await set_welcome_settings(chat_id, send_gif=not ws.get("send_gif", True))
     elif action == "reset":

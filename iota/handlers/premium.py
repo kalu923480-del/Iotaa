@@ -34,10 +34,14 @@ from telegram.ext import ContextTypes
 from utils.mongo_db import ensure_user, get_user, update_user, log_stars_payment
 from utils.helpers import mention, fmt, ts
 from utils.fonts import sc
+from utils.dm_redirect import require_dm
 from config import (PREMIUM_PRICE_COINS, PREMIUM_PRICE_STARS, PREMIUM_DURATION_DAYS,
                     GEMS_PRICE_STARS, GEMS_PRICE_COINS, OWNER_ID, PROTECT_1D_COST, PROTECT_2D_COST)
 
 async def pay_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 🆕 Premium purchase is a private/DM-only action (payment, invoices).
+    if not await require_dm(update, context, "/pay (Premium purchase)", "pay"):
+        return
     u = update.effective_user
     await ensure_user(u.id, u.username or "", u.full_name)
     d = await get_user(u.id)
@@ -117,6 +121,8 @@ async def pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def fpay_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Buy premium via Telegram Stars — stars go to owner."""
+    if not await require_dm(update, context, "/fpay (Stars purchase)", "pay"):
+        return
     u = update.effective_user
     # Stars payments go to the bot owner's Telegram account automatically
     try:
