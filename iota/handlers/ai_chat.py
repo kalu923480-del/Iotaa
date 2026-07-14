@@ -239,36 +239,51 @@ def _md_to_html(text: str) -> str:
 
 # 🔴 SAFETY NET: strip any leaked [SEARCH RESULTS] block from the AI's
 # reply. The system prompt explicitly forbids the model from echoing
-# this block back, but LLMs occasionally ignore instructions (especially
-# at higher temperature). This runs unconditionally as a final
-# guarantee, independent of how well the model follows instructions.
+# this block back, but LLMs often ignore that and echo it anyway —
+# SOMETIMES with the [END SEARCH RESULTS] terminator, but FREQUENTLY
+# just a bare "[SEARCH RESULTS]" tag followed by the raw results. Both
+# shapes MUST be removed, while NEVER touching Iota's own natural prose
+# that comes after the block.
 #
-# 🔴 CRITICAL FIX: the previous regex was
-#     r'\[?SEARCH RESULTS\]?.*?(\[END SEARCH RESULTS\]|\Z)'
-# which matched the BARE phrase "search results" anywhere in the reply
-# (brackets optional) and then — because there was no END marker — ate
-# *everything from that point to the end of the message* (\Z). So any
-# normal reply that merely contained the words "search results" (e.g.
-# "maine search results dekhe") got silently truncated to nothing,
-# making Iota look like she'd stopped replying. We now ONLY strip a
-# properly delimited block that BOTH starts with the bracketed open tag
-# AND ends with the [END SEARCH RESULTS] terminator. Bare mentions of
-# "search results" in natural text are left completely intact.
-_SEARCH_LEAK_RE = re.compile(
-    r'\[SEARCH RESULTS[^\]]*\].*?\[END SEARCH RESULTS\]',
+# History of this bug:
+#  • v1 (original): r'\[?SEARCH RESULTS\]?.*?(\Z)' — matched the bare
+#    phrase and deleted everything to end-of-string → replies vanished.
+#  • v2 (last fix): required the [END SEARCH RESULTS] terminator → too
+#    strict; the common bare "[SEARCH RESULTS]" echo slipped through and
+#    was shown to the user verbatim.
+#  • v3 (this): handle BOTH the delimited block AND the dangling tag.
+_SEARCH_LEAK_DELIM = re.compile(
+    r'\[SEARCH RESULTS[^\]]*\][\s\S]*?\[END SEARCH RESULTS\]',
+    re.IGNORECASE | re.DOTALL
+)
+# Dangling "[SEARCH RESULTS]" with NO terminator: remove the tag line and
+# the raw result lines that follow, up to the next blank line (paragraph
+# break). This preserves Iota's own prose that continues after it.
+_SEARCH_LEAK_DANGLING = re.compile(
+    r'\[SEARCH RESULTS[^\]]*\][\s\S]*?\n\n',
     re.IGNORECASE | re.DOTALL
 )
 # Only strip the exact 🔍 summary format we inject — never a 🔍 that's
-# just part of Iota's normal emoji usage.
+# just part of Iota's normal emoji usage. Line-bounded (NO DOTALL) so the
+# `.*` can't bleed past the numbered result lines into Iota's own prose.
 _SEARCH_EMOJI_LEAK_RE = re.compile(
     r'🔍\s*Real-time info for[^\n]*(?:\n\d+\..*)*',
-    re.IGNORECASE | re.DOTALL
+    re.IGNORECASE
 )
 
 
 def _strip_search_leak(text: str) -> str:
-    cleaned = _SEARCH_LEAK_RE.sub('', text)
+    # 1) Fully-delimited block (open + END) — most precise, do first.
+    cleaned = _SEARCH_LEAK_DELIM.sub('', text)
+    # 2) Dangling bare tag → strip to the next paragraph break.
+    cleaned = _SEARCH_LEAK_DANGLING.sub('', cleaned)
+    # 3) Our injected 🔍 summary echoed without brackets.
     cleaned = _SEARCH_EMOJI_LEAK_RE.sub('', cleaned)
+    # 4) Final sweep: remove any stray "[SEARCH RESULTS]" label that
+    #    survived (e.g. glued to text with no trailing structure), so the
+    #    raw label can never reach the user.
+    cleaned = re.sub(r'\[SEARCH RESULTS[^\]]*\]\s*', '', cleaned,
+                     flags=re.IGNORECASE)
     cleaned = cleaned.strip()
     # If stripping left nothing usable (the whole reply WAS the leak),
     # fall back to a safe, in-character line rather than sending blank.
