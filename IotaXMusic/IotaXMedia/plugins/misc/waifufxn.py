@@ -1,11 +1,9 @@
 # Authored By Iota Coders © 2025
+import httpx
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
-from nekosbest import Client as NekoClient
 from IotaXMedia import app
-
-neko_client = NekoClient()
 
 commands = {
     "punch": {"emoji": "💥", "text": "punched"},
@@ -49,12 +47,30 @@ def md_escape(text: str) -> str:
 
 
 async def get_animation(action: str):
-    try:
-        result = await neko_client.get_image(action)
-        return result.url
-    except Exception as e:
-        print(f"❌ NekoClient error: {e}")
-        return None
+    """Fetch an SFW reaction GIF URL, trying multiple public APIs.
+
+    nekos.life is tried first (broad action set, reliable), then waifu.pics
+    (covers kiss/slap/hug/pat/etc. in networks where it is reachable).
+    Returns the URL string or None if every source fails.
+    """
+    sources = [
+        f"https://nekos.life/api/{action}",
+        f"https://api.waifu.pics/sfw/{action}",
+    ]
+    for url in sources:
+        try:
+            async with httpx.AsyncClient(
+                verify=False, timeout=10, follow_redirects=True
+            ) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    gif_url = data.get("url") if isinstance(data, dict) else None
+                    if gif_url:
+                        return gif_url
+        except Exception as e:
+            print(f"❌ Animation fetch error ({url}): {e}")
+    return None
 
 
 @app.on_message(filters.command(list(commands.keys())) & ~filters.forwarded & ~filters.via_bot)

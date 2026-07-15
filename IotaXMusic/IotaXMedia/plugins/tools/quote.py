@@ -1,5 +1,6 @@
 # Authored By Iota Coders © 2025
 from io import BytesIO
+import base64
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from IotaXMedia import app
@@ -227,11 +228,38 @@ async def pyrogram_to_quotly(messages, is_reply):
         else:
             the_message_dict_to_append["replyMessage"] = {}
         payload["messages"].append(the_message_dict_to_append)
-    r = await fetch.post("https://bot.lyo.su/quote/generate.png", json=payload)
-    if not r.is_error:
-        return r.read()
-    else:
-        raise QuotlyException(r.json())
+    last_err = "all quote endpoints failed"
+    for url in (
+        "https://shnwazdev-quoteapi.vercel.app/generate.png",
+        "https://bot.lyo.su/quote/generate.png",
+        "https://qc-api.rizzy.eu.org/generate",
+    ):
+        try:
+            r = await fetch.post(url, json=payload)
+            if r.is_error:
+                last_err = f"HTTP {r.status_code} from {url}"
+                continue
+            content_type = r.headers.get("content-type", "")
+            body = r.content
+            # JSON response => base64 image inside result.image / image
+            if "application/json" in content_type or body[:1] == b"{":
+                try:
+                    data = r.json()
+                except Exception:
+                    last_err = f"invalid JSON from {url}"
+                    continue
+                img_b64 = (data.get("result") or {}).get("image") or data.get("image")
+                if not img_b64:
+                    last_err = f"no image field from {url}"
+                    continue
+                return base64.b64decode(img_b64)
+            # Otherwise treat the body as a raw image
+            if body:
+                return body
+            last_err = f"empty body from {url}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e} ({url})"
+    raise QuotlyException(last_err)
 # ------------------------------------------------------------------------------------------
 
 # Helper function to check if an argument is an integer
@@ -289,7 +317,10 @@ async def msg_quotly_cmd(self: Client, ctx: Message):
         bio_sticker.name = "misskatyquote_sticker.webp"
         await ctx.reply_sticker(bio_sticker)
     except Exception as e:
-        await ctx.reply_text(f"ERROR: {e}")
+        await ctx.reply_text(
+            "❌ Couldn't generate the quote right now.\n"
+            f"Reason: {e if isinstance(e, QuotlyException) else type(e).__name__}"
+        )
     finally:
         await processing_msg.delete()
 # ---------------------------------------------------------------------------------
