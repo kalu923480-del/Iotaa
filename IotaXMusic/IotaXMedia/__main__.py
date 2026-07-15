@@ -23,8 +23,10 @@ async def init():
         and not config.STRING4
         and not config.STRING5
     ):
-        LOGGER(__name__).error("ᴀssɪsᴛᴀɴᴛ sᴇssɪᴏɴ ɴᴏᴛ ғɪʟʟᴇᴅ, ᴘʟᴇᴀsᴇ ғɪʟʟ ᴀ ᴘʏʀᴏɢʀᴀᴍ sᴇssɪᴏɴ...")
-        exit()
+        LOGGER(__name__).warning(
+            "⚠️ ɴᴏ ᴀssɪsᴛᴀɴᴛ sᴇssɪᴏɴ sᴇᴛ – VC ᴘʟᴀʏʙᴀᴄᴋ ɪs ᴅɪsᴀʙʟᴇᴅ. "
+            "ᴀᴅᴅ STRING_SESSION ᴛᴏ .env ᴛᴏ ᴇɴᴀʙʟᴇ ɪᴛ. Bᴏᴛ ɪs sᴛɪʟʟ ʀᴜɴɴɪɴɢ."
+        )
 
     # ✅ Try to fetch cookies at startup
     try:
@@ -67,7 +69,7 @@ async def init():
 
     await StreamController.decorators()
     LOGGER("IotaXMedia").info(
-        "\x41\x6e\x6e\x69\x65\x20\x4d\x75\x73\x69\x63\x20\x52\x6f\x62\x6f\x74\x20\x53\x74\x61\x72\x74\x65\x64\x20\x53\x75\x63\x63\x65\x73\x73\x66\x75\x6c\x6c\x79\x2e\x2e\x2e"
+        "\x49\x6f\x74\x61\x20\x4d\x75\x73\x69\x63\x20\x52\x6f\x62\x6f\x74\x20\x53\x74\x61\x72\x74\x65\x64\x20\x53\x75\x63\x63\x65\x73\x73\x66\x75\x6c\x6c\x79\x2e\x2e\x2e"
     )
     await idle()
     await app.stop()
