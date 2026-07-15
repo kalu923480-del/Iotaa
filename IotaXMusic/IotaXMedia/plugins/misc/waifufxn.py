@@ -82,9 +82,57 @@ ACTION_TAGS = {
 
 GENERAL_TAGS = ["waifu", "neko", "shinobu", "megumin"]
 
+# purrbot.site is reachable from anywhere (incl. restricted networks) and
+# serves real reaction GIFs. Every action is mapped to a supported type so
+# the command never errors out even when waifu.pics / nekos.best are blocked.
+PURRBOT_MAP = {
+    "punch": "slap",
+    "slap": "slap",
+    "hug": "hug",
+    "bite": "bite",
+    "kiss": "kiss",
+    "highfive": "pat",
+    "shoot": "slap",
+    "dance": "dance",
+    "happy": "smile",
+    "baka": "cry",
+    "pat": "pat",
+    "nod": "poke",
+    "nope": "poke",
+    "cuddle": "cuddle",
+    "feed": "feed",
+    "bored": "cry",
+    "nom": "bite",
+    "yawn": "cry",
+    "facepalm": "cry",
+    "tickle": "tickle",
+    "yeet": "slap",
+    "think": "blush",
+    "blush": "blush",
+    "smug": "smile",
+    "wink": "smile",
+    "peck": "kiss",
+    "smile": "smile",
+    "wave": "pat",
+    "poke": "poke",
+    "stare": "blush",
+    "shrug": "cry",
+    "sleep": "cry",
+    "lurk": "poke",
+}
+
 
 def md_escape(text: str) -> str:
     return text.replace('[', '\\[').replace(']', '\\]')
+
+
+def _dedupe(seq):
+    seen, out = set(), []
+    for x in seq:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
 
 
 async def _try_waifu(tag: str):
@@ -124,21 +172,34 @@ async def _try_nekosbest(tag: str):
     return None
 
 
+async def _try_purrbot(ptype: str):
+    """Return a real reaction GIF URL from purrbot.site, or None on failure."""
+    url = f"https://api.purrbot.site/v2/img/sfw/{ptype}/gif"
+    try:
+        async with httpx.AsyncClient(
+            verify=False, timeout=10, follow_redirects=True
+        ) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                if not data.get("error"):
+                    return data.get("link")
+    except Exception:
+        pass
+    return None
+
+
 async def get_animation(action: str):
     """Return a reaction GIF/photo URL for an action.
 
-    Tries waifu.pics first, then nekos.best (both return real reaction
-    GIFs on any server with normal outbound internet). Returns the URL or
-    None if every source is unreachable.
+    Order of sources (best quality first, guaranteed-last):
+      1. waifu.pics      – real, accurate GIFs (works on normal servers)
+      2. nekos.best      – real GIFs (works on normal servers)
+      3. purrbot.site    – real GIFs, reachable from ANY network
+    Returns the URL or None only if every source is unreachable.
     """
     tags = ACTION_TAGS.get(action, [])
-    candidates = list(tags) + list(GENERAL_TAGS)
-    # de-duplicate while preserving order
-    seen, ordered = set(), []
-    for t in candidates:
-        if t not in seen:
-            seen.add(t)
-            ordered.append(t)
+    ordered = _dedupe(list(tags) + list(GENERAL_TAGS))
 
     for tag in ordered:
         gif_url = await _try_waifu(tag)
@@ -146,6 +207,12 @@ async def get_animation(action: str):
             return gif_url
     for tag in ordered:
         gif_url = await _try_nekosbest(tag)
+        if gif_url:
+            return gif_url
+
+    ptype = PURRBOT_MAP.get(action)
+    if ptype:
+        gif_url = await _try_purrbot(ptype)
         if gif_url:
             return gif_url
     return None
