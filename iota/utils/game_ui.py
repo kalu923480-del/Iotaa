@@ -139,18 +139,6 @@ def scoreboard(rows: list, title: str = "🏆 sᴄᴏʀᴇʙᴏᴀʀᴅ") -> str
     return "\n".join(lines)
 
 
-def card_face(rank: str, suit: str = "spades", hidden: bool = False):
-    """Convenience wrapper → game_art.render_card (returns PNG BytesIO)."""
-    from utils import game_art
-    return game_art.render_card(rank, suit, hidden)
-
-
-def dice_face(value: int):
-    """Convenience wrapper → game_art.render_dice (returns PNG BytesIO)."""
-    from utils import game_art
-    return game_art.render_dice(value)
-
-
 def board_thumb(title: str = "ʙᴏᴀʀᴅ", lines: list = None) -> str:
     """Text fallback 'board thumbnail' for games that don't yet have a
     dedicated PNG renderer (e.g. connect-four). Used inside result cards

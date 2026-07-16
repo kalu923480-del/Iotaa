@@ -348,9 +348,28 @@ async def leaderboard_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 #  CARD GAME — Full Iota-style
 # ═══════════════════════════════════════════════════════
 
+# Real playing-card deck: 52 unique (rank, suit) cards.
+_DECK_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+_DECK_SUITS = ["spade", "heart", "diamond", "club"]
+
+# Card power for comparison (A low=1 ... K high=13).
+_CARD_POWER = {r: i + 1 for i, r in enumerate(_DECK_RANKS)}
+
+
 def _gen_hand():
-    """4 hidden cards with random values 1-10."""
-    return [random.randint(1, 10) for _ in range(4)]
+    """Deal 4 distinct real playing cards (rank, suit) from a shuffled deck."""
+    deck = [(r, s) for r in _DECK_RANKS for s in _DECK_SUITS]
+    random.shuffle(deck)
+    return deck[:4]
+
+
+def _card_power(card) -> int:
+    return _CARD_POWER.get(card[0], 1)
+
+
+def _card_label(card) -> str:
+    from utils.card_assets import SUIT_SYMBOLS
+    return f"{card[0]}{SUIT_SYMBOLS.get(card[1], '♠')}"
 
 
 @games_gate
@@ -569,8 +588,8 @@ async def card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         card_idx = {"A":0,"B":1,"C":2,"D":3}[card]
         cards    = game["p1_cards"] if is_p1 else game["p2_cards"]
-        val      = cards[card_idx]
-        choices[rnd] = (card, val)
+        chosen   = cards[card_idx]          # (rank, suit) real card
+        choices[rnd] = (card, chosen)
 
         if is_p1:
             game["p1_choices"] = choices
@@ -598,8 +617,12 @@ async def _resolve_round(q, context, gid):
     if not game:
         return
     rnd   = str(game["round"])
-    p1c, p1v = game["p1_choices"][rnd]
-    p2c, p2v = game["p2_choices"][rnd]
+    p1c, p1card = game["p1_choices"][rnd]   # p1c = slot letter, p1card = (rank, suit)
+    p2c, p2card = game["p2_choices"][rnd]
+    p1v = _card_power(p1card)
+    p2v = _card_power(p2card)
+    p1lbl = _card_label(p1card)
+    p2lbl = _card_label(p2card)
 
     if p1v > p2v:
         game["score1"] += p1v
@@ -622,6 +645,17 @@ async def _resolve_round(q, context, gid):
 
     rw_text = p1_name if rnd_winner=="p1" else (p2_name if rnd_winner=="p2" else "🤝 TIE")
 
+    # Send the two played real cards as one composed image.
+    try:
+        from utils.card_assets import get_card_image, compose_cards_bytes
+        imgs = [get_card_image(p1card[0], p1card[1]),
+                get_card_image(p2card[0], p2card[1])]
+        art = compose_cards_bytes(imgs, label=f"{p1_name}  vs  {p2_name}")
+        await context.bot.send_photo(game["chat_id"], art, parse_mode="HTML",
+                                     caption=f"🃏 Rᴏᴜɴᴅ {rnd}: {p1_name} {p1lbl}  vs  {p2_name} {p2lbl} — Wɪɴɴᴇʀ: {rw_text}")
+    except Exception as e:
+        logger.debug(f"card round image failed: {e}")
+
     if game["round"] >= 4:
         # Game over
         await _end_game(q, context, gid, p1_name, p2_name, p1c, p1v, p2c, p2v, rw_text)
@@ -632,8 +666,8 @@ async def _resolve_round(q, context, gid):
         await q.edit_message_text(
             f"🃏 <b>Cᴀʀᴅ Gᴀᴍᴇ</b>\n\n"
             f"Round {rnd} result:\n"
-            f"🔵 {p1_name}: {p1c} = <b>{p1v}</b>\n"
-            f"🔴 {p2_name}: {p2c} = <b>{p2v}</b>\n"
+            f"🔵 {p1_name}: {p1lbl} = <b>{p1v}</b>\n"
+            f"🔴 {p2_name}: {p2lbl} = <b>{p2v}</b>\n"
             f"Round Winner: <b>{rw_text}</b>\n\n"
             f"Score — {p1_name}: {game['score1']} | {p2_name}: {game['score2']}\n\n"
             f"🔵 Round <b>{game['round']} / 4</b> — Choose your card:",
@@ -705,6 +739,20 @@ async def _end_game(q, context, gid, p1_name, p2_name, p1c, p1v, p2c, p2v, rw_te
     game = _card_games.pop(gid, None)
     if not game:
         return
+
+    # Send a composed image of both players' final (4th-round) cards.
+    try:
+        from utils.card_assets import get_card_image, compose_cards_bytes
+        final_rnd = str(max(1, game["round"]))
+        p1_final = game["p1_choices"].get(final_rnd, (None, ("A", "spade")))[1]
+        p2_final = game["p2_choices"].get(final_rnd, (None, ("A", "spade")))[1]
+        imgs = [get_card_image(p1_final[0], p1_final[1]),
+                get_card_image(p2_final[0], p2_final[1])]
+        art = compose_cards_bytes(imgs, label=f"🏆 {rw_text}")
+        await context.bot.send_photo(game["chat_id"], art, parse_mode="HTML",
+                                     caption=f"🃏 Fɪɴᴀʟ Cᴀʀᴅs — {p1_name} vs {p2_name}")
+    except Exception as e:
+        logger.debug(f"card final image failed: {e}")
 
     s1 = game["score1"]; s2 = game["score2"]
     bet = game["bet"]

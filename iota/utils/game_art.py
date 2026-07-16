@@ -216,43 +216,6 @@ def _draw_text_left(img: Image.Image, x: int, y: int, text: str, size: int,
 
 
 # ── Public renderers ───────────────────────────────────────────────────────
-_SUITS = {
-    "spades":   ("♠", TEXT),
-    "hearts":   ("♥", RED),
-    "diamonds": ("♦", RED),
-    "clubs":    ("♣", TEXT),
-}
-
-
-def render_card(rank: str, suit: str = "spades", hidden: bool = False) -> io.BytesIO:
-    """A themed playing-card face (or back when `hidden`)."""
-    w, h = 220, 320
-    img = _new_canvas(w, h)
-    d = ImageDraw.Draw(img)
-    _rounded_rect(d, (4, 4, w - 4, h - 4), 18, fill=PANEL_2,
-                  outline=AMBER_DIM, width=3)
-    if hidden:
-        for i in range(0, w, 18):
-            for j in range(0, h, 18):
-                if ((i + j) // 18) % 2 == 0:
-                    d.rectangle((i, j, i + 16, j + 16), fill=(28, 34, 56))
-        _draw_line_centered(img, w // 2, h // 2, "🂠", 120, AMBER)
-        return _finalize(img)
-    sym, col = _SUITS.get(suit, _SUITS["spades"])
-    _draw_text_left(img, 14, 12, f"{rank}", 30, col, bold=True)
-    _draw_text_left(img, 12, 46, sym, 26, col, bold=True)
-    _draw_line_centered(img, w // 2, h // 2 + 10, sym, 110, col)
-    f = _text_font(30, True)
-    try:
-        dummy = ImageDraw.Draw(_new_canvas(10, 10))
-        rw = dummy.textlength(rank, font=f)
-    except Exception:
-        rw = 30
-    _draw_text_left(img, w - 14 - int(rw), h - 12 - 30, rank, 30, col, bold=True)
-    _draw_text_left(img, w - 12 - 26, h - 12 - 30 - 34, sym, 26, col, bold=True)
-    return _finalize(img)
-
-
 def render_dice(value: int) -> io.BytesIO:
     """A single die face (1–6) with weighted pips."""
     value = max(1, min(6, int(value)))

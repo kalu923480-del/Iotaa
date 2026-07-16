@@ -27,7 +27,7 @@
 ║   First player to empty their hand wins! 🏆                ║
 ╚══════════════════════════════════════════════════════════╝
 """
-import random, asyncio, time, uuid
+import random, asyncio, time, uuid, logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from utils.mongo_db import ensure_user, add_balance
@@ -300,6 +300,19 @@ async def judge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bluffer = game["players"][bluffer_idx]
 
     revealed = ", ".join(CARD_NAMES[v] for v in actual)
+
+    # Reveal the actual dropped cards as a composed real-card image.
+    try:
+        from utils.card_assets import get_card_image, compose_cards_bytes
+        _suits_cycle = ["spade", "heart", "diamond", "club"]
+        imgs = [get_card_image(CARD_NAMES[v], _suits_cycle[(v - 1) % 4]) for v in actual]
+        art = compose_cards_bytes(imgs, label=f"Claimed: {CARD_NAMES[claimed]}")
+        await context.bot.send_photo(
+            chat.id, art, parse_mode="HTML",
+            caption=f"🂠 Revealed cards: <b>{revealed}</b>"
+        )
+    except Exception as e:
+        logger.debug(f"bluff reveal image failed: {e}")
 
     if was_honest:
         # Judge was WRONG — judge takes the whole pile

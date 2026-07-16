@@ -19,6 +19,12 @@ if IOTA not in sys.path:
     sys.path.insert(0, IOTA)
 
 from utils import game_art as g  # noqa: E402
+from utils import card_assets as ca  # noqa: E402
+
+
+def _card_png(rank, suit, hidden=False) -> bytes:
+    img = ca.get_card_back() if hidden else ca.get_card_image(rank, suit)
+    return ca.card_to_bytes(img)
 
 
 def _is_png(buf) -> bool:
@@ -31,8 +37,8 @@ class TestGameArtEngine(unittest.TestCase):
     # ── 1. Every renderer emits a valid PNG ────────────────────────────────
     def test_all_renderers_produce_png(self):
         cases = {
-            "card": g.render_card("A", "hearts"),
-            "card_back": g.render_card("?", hidden=True),
+            "card": io.BytesIO(_card_png("A", "hearts")),
+            "card_back": io.BytesIO(_card_png("A", "spades", hidden=True)),
             "dice": g.render_dice(5),
             "dice_row": g.render_dice_row([1, 3, 6]),
             "slots": g.render_slots(["\U0001F352", "\U0001F514", "\U0001F48E"]),
@@ -55,9 +61,9 @@ class TestGameArtEngine(unittest.TestCase):
             with self.subTest(v):
                 self.assertTrue(_is_png(g.render_dice(v)))
 
-    # ── 3. Unknown suit falls back to spades, never raises ─────────────────
+    # ── 3. Unknown suit falls back to a drawn card, never raises ──────────
     def test_card_unknown_suit_falls_back(self):
-        self.assertTrue(_is_png(g.render_card("K", "notasuit")))
+        self.assertTrue(_is_png(io.BytesIO(_card_png("K", "notasuit"))))
 
     # ── 4. Empty / oversized inputs don't crash ────────────────────────────
     def test_empty_inputs_safe(self):
@@ -68,8 +74,8 @@ class TestGameArtEngine(unittest.TestCase):
 
     # ── 5. Deterministic: same input -> identical bytes ────────────────────
     def test_deterministic_output(self):
-        a = g.render_card("Q", "clubs").getvalue()
-        b = g.render_card("Q", "clubs").getvalue()
+        a = _card_png("Q", "clubs")
+        b = _card_png("Q", "clubs")
         self.assertEqual(a, b)
         r1 = g.render_roulette(23).getvalue()
         r2 = g.render_roulette(23).getvalue()
