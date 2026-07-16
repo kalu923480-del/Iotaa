@@ -236,26 +236,54 @@ def _fresh_bio(img: bytes, name: str) -> BytesIO:
     return bio
 
 
+def _is_webp(b: bytes) -> bool:
+    return len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP"
+
+
+def _to_webp(img: bytes) -> bytes:
+    """Convert a raster (PNG/JPEG) to lossless WEBP so it can be sent as a
+    real Telegram sticker (Bot API only accepts WEBP for stickers). Returns
+    the original bytes if Pillow isn't available or conversion fails."""
+    try:
+        from PIL import Image
+        im = Image.open(BytesIO(img)).convert("RGBA")
+        out = BytesIO()
+        im.save(out, format="WEBP", lossless=True)
+        return out.getvalue()
+    except Exception as e:
+        logger.debug(f"/q png->webp conversion failed: {e}")
+        return img
+
+
 async def _send_quote(msg, img: bytes) -> None:
-    """Deliver the quote. Prefer a real sticker (IotaXMusic look); if Bot API
-    rejects the raw upload (stricter than Pyrogram/MTProto), transparently
-    fall back to a photo so the user always gets the quote."""
+    """Deliver the quote.
+
+    The quotly endpoints return a PNG (or WEBP). Bot API only accepts WEBP
+    for stickers, so:
+      • WEBP  → send as a sticker (the IotaXMusic look).
+      • PNG/JPEG → convert to WEBP and send as a sticker; if that still
+        fails, transparently fall back to a photo so the user always gets
+        the quote. Photos are far more lenient to upload under Bot API.
+    """
     reply_kwargs = {
         "reply_to_message_id": msg.message_id,
         "allow_sending_without_reply": True,
     }
+    sticker_bytes = _to_webp(img) if not _is_webp(img) else img
+    # 1) Sticker (IotaXMusic look).
     try:
-        await msg.reply_sticker(_fresh_bio(img, "misskatyquote_sticker.webp"),
+        await msg.reply_sticker(_fresh_bio(sticker_bytes, "misskatyquote_sticker.webp"),
                                 **reply_kwargs)
         return
     except Exception as e:
         logger.warning(f"/q reply_sticker rejected, falling back to photo: {e}")
+    # 2) Photo (reliable delivery path under Bot API).
     try:
         await msg.reply_photo(_fresh_bio(img, "quote.png"), **reply_kwargs)
         return
     except Exception as e:
         logger.warning(f"/q reply_photo also failed: {e}")
-        raise
+        raise QuotlyException(f"send failed: {type(e).__name__}")
 
 
 async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -309,11 +337,15 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         img = await _render_quote(messages, include_reply)
         if not _looks_like_image(img):
-            raise QuotlyException("returned data is not an image")
+            raise QuotlyException("the quote service returned something that isn't an image")
         await _send_quote(msg, img)
+    except QuotlyException as e:
+        await _safe_reply(msg, f"❌ Couldn't generate the quote right now.\nReason: {e}")
     except Exception as e:
-        reason = e if isinstance(e, QuotlyException) else type(e).__name__
-        await _safe_reply(msg, f"❌ Couldn't generate the quote right now.\nReason: {reason}")
+        logger.exception(f"/q unexpected error: {e}")
+        await _safe_reply(
+            msg, "❌ Couldn't generate the quote right now. Please try again later."
+        )
     finally:
         try:
             await processing.delete()
