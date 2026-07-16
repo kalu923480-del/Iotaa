@@ -30,9 +30,11 @@ call (a ``lambda``), never an already-awaited coroutine object, so retries are
 always valid.
 """
 import asyncio
+import contextlib
 import logging
 from typing import Awaitable, Callable, Optional
 
+from telegram.constants import ChatAction
 from telegram.error import (TimedOut, RetryAfter, NetworkError,
                             BadRequest, Forbidden)
 
@@ -99,3 +101,72 @@ async def safe_call(
             )
             return None
     return None
+
+
+# ── Chat-action ("typing…", "choosing sticker…") helpers ──────────────────
+#
+# Telegram chat actions (the "Iota is typing…" / "Iota is choosing a
+# sticker…" hint shown under the chat title) auto-expire after ~5 seconds.
+# For anything that takes longer (an AI call + web search, a quote render
+# hitting an external API) a single send_chat_action call would flicker off
+# mid-work. `chat_action()` is an async context manager that RE-SENDS the
+# action every few seconds until the work is done, so the indicator stays
+# visible for the whole duration. It NEVER raises — a failed action must
+# never break the actual reply.
+
+# Common actions, re-exported so callers don't need to import ChatAction.
+ACTION_TYPING = ChatAction.TYPING
+ACTION_CHOOSE_STICKER = ChatAction.CHOOSE_STICKER
+ACTION_UPLOAD_PHOTO = ChatAction.UPLOAD_PHOTO
+ACTION_UPLOAD_VOICE = ChatAction.UPLOAD_VOICE
+ACTION_RECORD_VOICE = ChatAction.RECORD_VOICE
+
+
+async def send_action(bot, chat_id, action=ACTION_TYPING,
+                      message_thread_id=None) -> None:
+    """Fire a single chat action. Swallows every error (a cosmetic hint must
+    never break a command)."""
+    try:
+        kwargs = {"chat_id": chat_id, "action": action}
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+        await bot.send_chat_action(**kwargs)
+    except Exception as e:
+        logger.debug(f"send_action failed ({action}): {e}")
+
+
+@contextlib.asynccontextmanager
+async def chat_action(bot, chat_id, action=ACTION_TYPING, *,
+                      interval: float = 4.0, message_thread_id=None):
+    """
+    Async context manager that keeps a chat action alive for the whole
+    duration of the wrapped work by re-sending it every `interval` seconds
+    (Telegram expires actions after ~5s). Works in DMs AND groups.
+
+    Usage:
+        async with chat_action(context.bot, chat_id, ACTION_TYPING):
+            reply = await do_slow_work()
+        await msg.reply_html(reply)
+
+    Never raises: if the background refresher hits an error it just stops
+    quietly, leaving the real work untouched.
+    """
+    stop = asyncio.Event()
+
+    async def _pump():
+        # Send once immediately, then refresh until told to stop.
+        while not stop.is_set():
+            await send_action(bot, chat_id, action,
+                              message_thread_id=message_thread_id)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
+
+    task = asyncio.create_task(_pump())
+    try:
+        yield
+    finally:
+        stop.set()
+        with contextlib.suppress(Exception):
+            await task

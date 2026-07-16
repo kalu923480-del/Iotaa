@@ -99,6 +99,7 @@ COMMAND_GROUPS = {
     "🎭 Quote Stickers": [
         "/q (reply to a text message) — turn that message into a Telegram-style quote sticker",
         "/q r — also show the reply-context bubble above the quote",
+        "/q <#hex|colour|random> — pick a custom background colour",
     ],
     "🛠️ Group Admin (admins only)": [
         ".warn .ban .mute .kick — moderation actions (admins only)",

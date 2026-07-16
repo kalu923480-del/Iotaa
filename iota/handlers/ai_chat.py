@@ -17,6 +17,7 @@ from utils.ai_memory import save_memory, get_memory, clear_memory
 from utils.search import search_summary, web_search
 from utils.connect import get_partner_id
 from utils.gif_provider import get_gif_for_mood
+from utils.telegram_safe import chat_action, ACTION_TYPING
 from config import OWNER_USERNAME, OWNER_ID, BOT_NAME, OWNER_NAME, BOT_USERNAME, BOT_AGE, BOT_FROM, BOT_DOB
 
 logger = logging.getLogger(__name__)
@@ -679,9 +680,11 @@ async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium = bool((d or {}).get("is_premium", False))
     try:
         is_group = chat_obj.type != "private"
-        reply = await _respond(u.id, user_text, is_premium,
-                               is_group, chat_obj.title or "",
-                               first_name=u.first_name or "", username=u.username or "")
+        async with chat_action(context.bot, msg.chat_id, ACTION_TYPING,
+                               message_thread_id=getattr(msg, "message_thread_id", None)):
+            reply = await _respond(u.id, user_text, is_premium,
+                                   is_group, chat_obj.title or "",
+                                   first_name=u.first_name or "", username=u.username or "")
         await _safe_edit(thinking, reply)
         await _maybe_send_reply_gif(msg, reply)
     except Exception as e:
@@ -783,15 +786,13 @@ async def dm_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         pass
     if _is_asking_about_other(text):
         await msg.reply_html("kyu tujhe uski personal details? nahi bataungi 🙄"); return
-    # 🔴 Show a "typing…" indicator immediately so the DM never looks dead
-    # while Iota is fetching real-time search results + calling the AI.
+    # 🔴 Show a live "typing…" indicator for the WHOLE duration (Telegram
+    # actions expire after ~5s, so chat_action re-sends it every few seconds)
+    # — the DM never looks dead while Iota searches + calls the AI.
     try:
-        await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
-    except Exception:
-        pass
-    try:
-        reply = await _respond(u.id, text, is_premium, False, "", 130,
-                                first_name=u.first_name or "", username=u.username or "")
+        async with chat_action(context.bot, msg.chat_id, ACTION_TYPING):
+            reply = await _respond(u.id, text, is_premium, False, "", 130,
+                                    first_name=u.first_name or "", username=u.username or "")
         await _safe_send(msg, reply)
         await _maybe_send_reply_gif(msg, reply)
     except Exception as e:
@@ -875,9 +876,13 @@ async def group_mention_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await msg.reply_html("kyu tujhe uski personal details? group me sirf public info share hoti 🙄"); return
 
     try:
-        reply = await _respond(u.id, clean, is_premium,
-                               True, update.effective_chat.title or "", 130,
-                               first_name=u.first_name or "", username=u.username or "")
+        # 🔴 Same live "typing…" indicator in GROUPS as in DMs, so the group
+        # sees "Iota is typing…" while she searches + thinks.
+        async with chat_action(context.bot, msg.chat_id, ACTION_TYPING,
+                               message_thread_id=getattr(msg, "message_thread_id", None)):
+            reply = await _respond(u.id, clean, is_premium,
+                                   True, update.effective_chat.title or "", 130,
+                                   first_name=u.first_name or "", username=u.username or "")
         await _safe_send(msg, reply)
         await _maybe_send_reply_gif(msg, reply)
     except Exception as e:

@@ -9,19 +9,24 @@ python-telegram-bot.
 Usage:
     /q            → quote the replied message (WEBP sticker)
     /q r          → also render the reply-context bubble above the quote
-    /q 3          → quote a short thread of the last N messages (1-10)
-    /q r 3        → both flags together
+    /q 3          → count arg (1-10) — reserved; Bot API can't fetch threads
+    /q <color>    → custom background: a hex (#1b1429) or 'random'
+    /q r random   → flags can be combined in any order
 
 Everything degrades gracefully: if every quote endpoint is down, the user
 gets a short in-character error instead of a crash. Never raises.
 """
 import base64
 import logging
+import random
+import re
 from io import BytesIO
 
 import aiohttp
 from telegram import Update
 from telegram.ext import ContextTypes
+
+from utils.telegram_safe import chat_action, ACTION_CHOOSE_STICKER
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,7 @@ _QUOTE_ENDPOINTS = (
 
 _BACKGROUND = "#1b1429"
 _MAX_THREAD = 10
+_QUOTE_EMOJI = "💜"  # emoji tag attached to the sticker (like the quote-bot)
 _HEADERS = {
     "Accept-Language": "en-US",
     "User-Agent": (
@@ -143,11 +149,12 @@ async def _avatar_data_url(context, m) -> str:
         return ""
 
 
-async def _build_payload(context, messages, include_reply: bool) -> dict:
+async def _build_payload(context, messages, include_reply: bool,
+                         background: str) -> dict:
     payload = {
         "type": "quote",
         "format": "webp",
-        "backgroundColor": _BACKGROUND,
+        "backgroundColor": background or _BACKGROUND,
         "messages": [],
     }
     for m in messages:
@@ -177,10 +184,11 @@ async def _build_payload(context, messages, include_reply: bool) -> dict:
     return payload
 
 
-async def _render_quote(context, messages, include_reply: bool) -> bytes:
+async def _render_quote(context, messages, include_reply: bool,
+                        background: str = _BACKGROUND) -> bytes:
     """POST the payload to each endpoint until one returns an image.
     Returns raw image bytes. Raises QuotlyError if all endpoints fail."""
-    payload = await _build_payload(context, messages, include_reply)
+    payload = await _build_payload(context, messages, include_reply, background)
     last_err = "all quote endpoints failed"
     async with aiohttp.ClientSession(headers=_HEADERS, timeout=_TIMEOUT) as s:
         for url in _QUOTE_ENDPOINTS:
@@ -219,22 +227,48 @@ async def _render_quote(context, messages, include_reply: bool) -> bytes:
     raise QuotlyError(last_err)
 
 
-def _parse_args(args) -> tuple[bool, int]:
-    """Parse `/q [r] [N]` args → (include_reply, count). Mirrors the
-    IotaXMusic behaviour: 'r' toggles reply context, an integer sets the
-    thread length (1-10). Invalid tokens are ignored."""
+_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_KNOWN_COLOR_NAMES = {
+    "white", "black", "red", "green", "blue", "yellow", "orange", "purple",
+    "pink", "gray", "grey", "cyan", "magenta", "brown", "teal", "navy",
+    "maroon", "olive", "lime", "aqua", "silver", "gold", "violet", "indigo",
+}
+
+
+def _random_hex() -> str:
+    return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+
+
+def _parse_args(args) -> tuple[bool, int, str]:
+    """Parse `/q [r] [N] [color]` → (include_reply, count, background).
+
+    • 'r' / 'reply' → include the reply-context bubble.
+    • integer (1-10) → count (reserved; Bot API can't fetch threads, but we
+      still validate the range so `/q 3` doesn't error).
+    • '#rrggbb' / '#rgb' / a known colour name / 'random' → background color.
+    Invalid tokens are ignored. Returns background="" to mean "use default"."""
     include_reply = False
     count = 1
+    background = ""
     for a in (args or []):
         al = a.lower().strip()
-        if al == "r":
+        if al in ("r", "reply"):
             include_reply = True
+            continue
+        if al == "random":
+            background = _random_hex()
+            continue
+        if _HEX_RE.match(al):
+            background = al
+            continue
+        if al in _KNOWN_COLOR_NAMES:
+            background = al
             continue
         try:
             count = int(al)
         except (ValueError, TypeError):
             continue
-    return include_reply, count
+    return include_reply, count, background
 
 
 async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,7 +280,7 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    include_reply, count = _parse_args(context.args)
+    include_reply, count, background = _parse_args(context.args)
     if count < 1 or count > _MAX_THREAD:
         await msg.reply_text(f"❌ Range 1-{_MAX_THREAD} rakho.")
         return
@@ -258,31 +292,45 @@ async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    processing = None
-    try:
-        processing = await msg.reply_text("❄️")
-    except Exception:
-        processing = None
+    chat_id = update.effective_chat.id
+    thread_id = getattr(msg, "message_thread_id", None)
 
     try:
-        # The Telegram Bot API (unlike Pyrogram/MTProto) cannot fetch an
-        # arbitrary range of past messages, so a multi-message thread quote
-        # isn't reliably available here — we quote the replied message. The
-        # `r` flag still renders the reply-context bubble above it.
-        messages = [reply]
-        img = await _render_quote(context, messages, include_reply)
+        # 🔴 "Iota is choosing a sticker…" indicator — shows in BOTH DMs and
+        # groups for the whole render (chat_action re-sends it every few
+        # seconds since Telegram actions expire after ~5s).
+        async with chat_action(context.bot, chat_id, ACTION_CHOOSE_STICKER,
+                               message_thread_id=thread_id):
+            img = await _render_quote(context, [reply], include_reply,
+                                      background or _BACKGROUND)
         bio = BytesIO(img)
         bio.name = "quote.webp"
-        await msg.reply_sticker(bio)
+        # Anchor the sticker as a reply to the /q command, and never fail if
+        # the original message was deleted meanwhile.
+        await msg.reply_sticker(
+            bio, emoji=_QUOTE_EMOJI,
+            reply_to_message_id=msg.message_id,
+            allow_sending_without_reply=True,
+        )
     except QuotlyError as e:
         logger.warning(f"/q failed (all endpoints): {e}")
-        await msg.reply_text("❌ Abhi quote nahi ban paaya, thodi der baad try karo 🥺")
+        await _safe_reply(msg, "❌ Abhi quote nahi ban paaya, thodi der baad try karo 🥺")
     except Exception as e:
-        logger.exception(f"/q unexpected error: {e}")
-        await msg.reply_text("❌ Kuch gadbad ho gayi quote banate waqt 🤷🏻‍♀️")
-    finally:
-        if processing is not None:
-            try:
-                await processing.delete()
-            except Exception:
-                pass
+        # Distinguish common Telegram permission errors for a clearer message.
+        emsg = str(e).lower()
+        if "not enough rights" in emsg or "sticker" in emsg and "forbidden" in emsg:
+            await _safe_reply(msg, "❌ Mujhe yahan sticker bhejne ki permission nahi hai 🥺")
+        elif "chat write forbidden" in emsg or "forbidden" in emsg:
+            await _safe_reply(msg, "❌ Yahan main message nahi bhej sakti 😔")
+        else:
+            logger.exception(f"/q unexpected error: {e}")
+            await _safe_reply(msg, "❌ Kuch gadbad ho gayi quote banate waqt 🤷🏻‍♀️")
+
+
+async def _safe_reply(msg, text: str):
+    """Send a plain-text reply, swallowing any send error (used on the error
+    paths so a failed error-notice can't crash the handler)."""
+    try:
+        await msg.reply_text(text)
+    except Exception as e:
+        logger.debug(f"/q error-reply failed: {e}")
