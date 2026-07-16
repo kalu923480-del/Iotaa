@@ -9,17 +9,14 @@ from IotaXMedia.core.call import StreamController
 from IotaXMedia.utils import bot_sys_stats
 from IotaXMedia.utils.decorators.language import language
 from IotaXMedia.utils.inline import supp_markup
-from config import BANNED_USERS, PING_VID_URL
+from config import BANNED_USERS
 
 
 @app.on_message(filters.command("ping", prefixes=["/", "."]) & ~BANNED_USERS)
 @language
 async def ping_com(client, message: Message, _):
     start = datetime.now()
-    response = await message.reply_video(
-        video=PING_VID_URL,
-        caption=_["ping_1"].format(app.mention),
-    )
+    response = await message.reply_text(_["ping_1"].format(app.mention))
     pytgping = await StreamController.ping()
     UP, CPU, RAM, DISK = await bot_sys_stats()
     resp = (datetime.now() - start).microseconds / 1000

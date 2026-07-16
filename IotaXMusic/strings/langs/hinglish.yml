@@ -168,7 +168,7 @@ str_2 : "Valid stream verify ho gaya.\n\nProcessing..."
 str_3 : "YouTube live stream nahi ho paya, live format nahi mila."
 
 ping_1 : "{0} ping kar raha hu..."
-ping_2 : "{1}\n\nPing: {0}ms..\n\nSystem Stats:\n\nUptime: {2}\nRAM: {3}\nCPU: {4}\nDisk: {5}\nPytgcalls: {6}ms\n\nBy » Jarvis ♡︎"
+ping_2 : "{1}\n\nPing: {0}ms..\n\nSystem Stats:\n\nUptime: {2}\nRAM: {3}\nCPU: {4}\nDisk: {5}\nPytgcalls: {6}ms\n\nBy » im_ntg ♡︎"
 
 queue_1 : "Queue la raha hu...\n\nThoda wait kar..."
 queue_2 : "Queue khali hai bhai."

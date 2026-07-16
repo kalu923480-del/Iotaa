@@ -1,5 +1,6 @@
 # Authored By Iota Coders © 2025
 import asyncio
+import os
 import random
 import time
 from pyrogram import filters
@@ -26,7 +27,7 @@ from IotaXMedia.utils.decorators.language import LanguageStart
 from IotaXMedia.utils.formatters import get_readable_time
 from IotaXMedia.utils.inline.start import private_panel, start_panel
 from IotaXMedia.utils.inline.help import first_page
-from config import BANNED_USERS, AYUV, HELP_IMG_URL, START_VIDS, STICKERS
+from config import BANNED_USERS, AYUV, HELP_IMG_URL, STREAM_IMG_URL, STICKERS
 from strings import get_string
 
 
@@ -36,6 +37,22 @@ async def delete_sticker_after_delay(message: Message, delay: int) -> None:
         await message.delete()
     except Exception:
         pass
+
+
+async def fetch_user_pfp(user_id: int, fallback: str) -> str:
+    try:
+        chat = await app.get_chat(user_id)
+        if chat.photo and getattr(chat.photo, "big_file_id", None):
+            os.makedirs("downloads", exist_ok=True)
+            path = await app.download_media(
+                chat.photo.big_file_id,
+                file_name=f"downloads/pp_{user_id}.png",
+            )
+            if path:
+                return path
+    except Exception:
+        pass
+    return fallback
 
 
 @app.on_message(filters.command(["start"]) & filters.private & ~BANNED_USERS)
@@ -132,8 +149,10 @@ async def start_pm(client, message: Message, _):
         served_chats_coro, served_users_coro, stats_coro
     )
 
-    await message.reply_video(
-        random.choice(START_VIDS),
+    photo_arg = await fetch_user_pfp(message.from_user.id, HELP_IMG_URL)
+
+    await message.reply_photo(
+        photo=photo_arg,
         caption=random.choice(AYUV).format(
             message.from_user.mention, app.mention, UP, DISK, CPU, RAM, len(served_users), len(served_chats)
         ),
@@ -157,9 +176,10 @@ async def start_pm(client, message: Message, _):
 async def start_gp(client, message: Message, _):
     out = start_panel(_)
     uptime = int(time.time() - _boot_)
+    photo_arg = await fetch_user_pfp(message.from_user.id, HELP_IMG_URL)
     try:
-        await message.reply_video(
-            random.choice(START_VIDS),
+        await message.reply_photo(
+            photo=photo_arg,
             caption=_["start_1"].format(app.mention, get_readable_time(uptime)),
             reply_markup=InlineKeyboardMarkup(out),
         )
@@ -198,8 +218,9 @@ async def welcome(client, message: Message):
                     return await app.leave_chat(message.chat.id)
 
                 out = start_panel(_)
-                await message.reply_video(
-                    random.choice(START_VIDS),
+                photo_arg = await fetch_user_pfp(message.from_user.id, STREAM_IMG_URL)
+                await message.reply_photo(
+                    photo=photo_arg,
                     caption=_["start_3"].format(
                         message.from_user.mention,
                         app.mention,
