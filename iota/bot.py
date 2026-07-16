@@ -162,7 +162,10 @@ def main():
         whisper_compose_callback, whisper_dm_handler,
     )
     from handlers.slots_game import slots_cmd
-    from handlers.quote_sticker import quote_sticker_cmd
+    from handlers.quote_sticker import (
+        quote_sticker_cmd, qrand_cmd, qtop_cmd, qrate_cmd, qcolor_cmd,
+        qemoji_cmd, privacy_cmd, qarchive_cmd, qforget_cmd, quote_rate_callback,
+    )
     from handlers.iota_roulette import roulette_cmd, rjoin_cmd, bid_cmd
     from handlers.iota_wheel import wheel_cmd
     from handlers.hack_game    import (
@@ -608,6 +611,14 @@ def main():
 
     app.add_handler(CommandHandler("slots", slots_cmd))
     app.add_handler(CommandHandler("q", quote_sticker_cmd))
+    app.add_handler(CommandHandler("qrand", qrand_cmd))
+    app.add_handler(CommandHandler("qtop", qtop_cmd))
+    app.add_handler(CommandHandler("qrate", qrate_cmd))
+    app.add_handler(CommandHandler("qcolor", qcolor_cmd))
+    app.add_handler(CommandHandler("qemoji", qemoji_cmd))
+    app.add_handler(CommandHandler("privacy", privacy_cmd))
+    app.add_handler(CommandHandler("qarchive", qarchive_cmd))
+    app.add_handler(CommandHandler("qforget", qforget_cmd))
 
     # ── 🎰 Iota Roulette + 🎡 Iota Wheel (Iota mini-game series) ─────────
     app.add_handler(CommandHandler("roulette", roulette_cmd))
@@ -919,6 +930,8 @@ def main():
     app.add_handler(CallbackQueryHandler(giveaway_join_callback, pattern=r"^ga_join:"))
     app.add_handler(CallbackQueryHandler(join_request_callback, pattern=r"^jr_"))
     app.add_handler(CallbackQueryHandler(claimquest_callback, pattern=r"^pq_"))
+    # ── Quote rating buttons (attach 👍/👎 to rated quotes) ──────────
+    app.add_handler(CallbackQueryHandler(quote_rate_callback, pattern=r"^qr_"))
     app.add_handler(CallbackQueryHandler(connect4_callback,  pattern=r"^cf_"))
     app.add_handler(CallbackQueryHandler(uno_callback,      pattern=r"^uno_"))
     app.add_handler(CallbackQueryHandler(chess_callback,    pattern=r"^ch_"))

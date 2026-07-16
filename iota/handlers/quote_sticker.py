@@ -1,382 +1,425 @@
 """
-Iota Bot — /q (Quote Sticker)
-=============================
+Iota Bot — /q (Quote Sticker / Image Command) — upgraded + quote-bot port
 
-Ported faithfully from the IotaXMusic ``/q`` (quotly) system, but adapted from
-Pyrogram/MTProto to python-telegram-bot (Bot API). Reply to a message with /q
-to turn it into a Telegram-style quote image.
+Reply to a message with /q to turn it into a styled quote card. Ports the
+best of the standalone quote-bot into iota's Python stack (no external
+quote-api / TDLib needed — rendering is local via utils.quote_render.py).
 
-How it works
-------------
-1. Build a quotly ``quote`` payload from the replied message (text, sender,
-   entities, optional reply-context bubble) — identical shape to IotaXMusic.
-2. POST it to the external quotly API (LyoSU-compatible). It returns a PNG
-   image (Telegram stickers are PNG-based; the ``.webp`` name is just the
-   conventional extension).
-3. Send it back. We try a real ``sticker`` first (the IotaXMusic look); if
-   Bot API rejects the raw upload, we transparently fall back to a ``photo``,
-   which Bot API accepts far more leniently. The user always gets the quote.
+Commands
+  /q                 → quote the replied message (WEBP sticker)
+  /q 2 /q 3 …        → quote a short thread (last N messages)
+  /q png /q img      → send as a PNG image instead of a sticker
+  /q dark|light|white|purple|blue|telegram   → theme
+  /q color #ff3366   → custom background colour
+  /q border|noborder → toggle the card outline
+  /q s1.5            → hi-res scale (PNG only)
+  /q c               → crop transparent margin (PNG only)
+  /q r               → include reply context (default on)
+  /q anon            → anonymise the sender (privacy)
+  /q rate            → attach 👍/👎 rating buttons
+  /qrand             → random quote from this chat's history
+  /qtop              → top-rated quotes in this chat
+  /qrate             → toggle rating by default for your quotes
+  /qcolor <theme>    → set your default background theme
+  /qemoji <emoji>    → set your emoji brand (corner mark)
+  /privacy           → toggle anonymise-by-default
+  /qarchive          → save the replied message to your quote collection
+  /qforget           → delete your most recent saved quote
 
-Everything degrades gracefully: if every quote endpoint is down, or the bot
-cannot send media in that chat, the user gets a short in-character error
-instead of a crash. Never raises. No chat actions are used.
+Everything degrades gracefully: if Mongo is down, ratings/archive simply
+no-op and the quote still renders + sends.
 """
-import base64
+import io
 import logging
 import random
-import re
-from io import BytesIO
+import time
 
-import aiohttp
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
+
+from utils.helpers import get_profile_photo_id
+from utils.quote_render import render_quote_card, QuoteRenderError
+from utils.safe_html import safe_html
+from utils.quote_store import (
+    get_settings, set_setting, save_quote, rate_quote,
+    top_quotes, forget_quote,
+)
 
 logger = logging.getLogger(__name__)
 
-# Quote-API endpoints tried in order (LyoSU-compatible, same resilient list
-# the IotaXMusic bot uses so /q keeps working across networks).
-_QUOTE_ENDPOINTS = (
-    "https://shnwazdev-quoteapi.vercel.app/generate.png",
-    "https://bot.lyo.su/quote/generate.png",
-    "https://qc-api.rizzy.eu.org/generate",
-)
+_avatar_cache: dict = {}
 
-_BACKGROUND = "#1b1429"
-_QUOTE_EMOJI = "💜"
-_HEADERS = {
-    "Accept-Language": "en-US",
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-}
-_TIMEOUT = aiohttp.ClientTimeout(total=25)
+MAX_QUOTE_LENGTH = 400
+MAX_THREAD = 10
+MODES = {"png", "img"}
+THEME_NAMES = {"dark", "light", "white", "purple", "blue", "telegram"}
+BORDER_ON = {"border"}
+BORDER_OFF = {"noborder"}
+RATE_ON = {"rate"}
+ANON_ON = {"anon", "privacy"}
 
 
-class QuotlyError(Exception):
-    """Raised when no quote endpoint could produce an image."""
+def _reply_thumb_file_id(msg):
+    if msg.photo:
+        return msg.photo[-1].file_id
+    if msg.video and msg.video.thumbnail:
+        return msg.video.thumbnail.file_id
+    if msg.animation and msg.animation.thumbnail:
+        return msg.animation.thumbnail.file_id
+    if msg.sticker and msg.sticker.thumbnail:
+        return msg.sticker.thumbnail.file_id
+    if msg.audio and msg.audio.thumbnail:
+        return msg.audio.thumbnail.file_id
+    if msg.document and msg.document.thumbnail:
+        return msg.document.thumbnail.file_id
+    return None
 
 
-# ── Telegram-message → quotly field extractors ──────────────────────────────
-
-def _sender_id(m) -> int:
-    if getattr(m, "forward_origin", None):
-        u = getattr(m, "from_user", None)
-        return u.id if u else 1
-    if getattr(m, "from_user", None):
-        return m.from_user.id
-    if getattr(m, "sender_chat", None):
-        return m.sender_chat.id
-    return 1
+def _msg_to_dict(m):
+    u = m.from_user
+    text = m.text or m.caption
+    if not text or not text.strip():
+        return None
+    name = (u.full_name or u.first_name or "Someone") if u else "Someone"
+    return {"name": name, "text": text.strip(), "uid": u.id if u else 0}
 
 
-def _sender_name(m) -> str:
-    u = getattr(m, "from_user", None)
-    if u:
-        return u.full_name or u.first_name or "Someone"
-    sc = getattr(m, "sender_chat", None)
-    if sc:
-        return sc.title or "Channel"
-    return "Someone"
+def _rating_kb(qid):
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("👍", callback_data=f"qr_{qid}_up"),
+        InlineKeyboardButton("👎", callback_data=f"qr_{qid}_down"),
+    ]])
 
 
-def _sender_username(m) -> str:
-    u = getattr(m, "from_user", None)
-    if u and u.username:
-        return u.username
-    sc = getattr(m, "sender_chat", None)
-    if sc and getattr(sc, "username", None):
-        return sc.username
-    return ""
-
-
-def _chat_type(m) -> str:
-    """Chat type string the quotly API expects ('private' / 'group' /
-    'supergroup' / 'channel')."""
-    chat = getattr(m, "chat", None)
-    t = getattr(chat, "type", None)
-    if t is None:
-        return "private"
-    return str(t).lower()
-
-
-def _text_or_caption(m) -> str:
-    return (getattr(m, "text", None) or getattr(m, "caption", None) or "")
-
-
-def _entities_to_payload(m) -> list:
-    """Convert PTB message entities to the quotly entity format so bold /
-    italic / links / code etc. render exactly like in Telegram."""
-    ents = getattr(m, "entities", None) or getattr(m, "caption_entities", None) or []
-    out = []
-    for e in ents:
+async def _gather_messages(update, context, reply, count):
+    primary = reply
+    msgs = []
+    head = _msg_to_dict(primary)
+    if head:
+        msgs.append(head)
+    if count > 1:
         try:
-            etype = e.type.value if hasattr(e.type, "value") else str(e.type)
+            older = []
+            history = await context.bot.get_chat_history(
+                update.effective_chat.id,
+                offset_id=primary.message_id, offset=0, limit=count - 1,
+            )
+            for m in history:
+                d = _msg_to_dict(m)
+                if d:
+                    older.append(d)
+                if len(msgs) + len(older) >= count:
+                    break
+            msgs = msgs + list(reversed(older))
+        except Exception as e:
+            logger.debug(f"/q thread history fetch failed: {e}")
+    return msgs
+
+
+async def _fetch_avatar(context, sender):
+    if not sender:
+        return None
+    try:
+        fid = await get_profile_photo_id(context, sender.id)
+        if fid:
+            now = time.time()
+            cached = _avatar_cache.get(sender.id)
+            if cached and cached[0] > now and cached[1] is not None:
+                return cached[1]
+            tgf = await context.bot.get_file(fid)
+            avatar_bytes = bytes(await tgf.download_as_bytearray())
+            _avatar_cache[sender.id] = (now + 3600, avatar_bytes)
+            return avatar_bytes
+    except Exception as e:
+        logger.debug(f"/q avatar fetch failed for {getattr(sender, 'id', '?')}: {e}")
+    return None
+
+
+async def _make_quote(update, context, messages, primary_msg, opts):
+    """Render + send a quote with the given options. Returns nothing."""
+    msg = update.effective_message
+    mode = opts.get("mode", "sticker")
+    theme = opts.get("theme", "dark")
+    border = opts.get("border", True)
+    scale = opts.get("scale", 1.0)
+    crop = opts.get("crop", False)
+    privacy = opts.get("privacy", False)
+    emoji = opts.get("emoji")
+    rate = opts.get("rate", False)
+
+    sender = primary_msg.from_user if primary_msg else None
+    avatar_bytes = await _fetch_avatar(context, sender)
+    timestamp = None
+    if primary_msg and primary_msg.date:
+        try:
+            timestamp = primary_msg.date.strftime("%H:%M")
         except Exception:
-            etype = str(getattr(e, "type", ""))
-        item = {
-            "type": etype,
-            "offset": e.offset,
-            "length": e.length,
-        }
-        cid = getattr(e, "custom_emoji_id", None)
-        if cid:
-            item["custom_emoji_id"] = cid
-        out.append(item)
-    return out
+            timestamp = None
 
+    reply_preview = None
+    if primary_msg and primary_msg.reply_to_message:
+        rp = primary_msg.reply_to_message
+        rptext = (rp.text or rp.caption or "").strip()
+        if rptext:
+            ru = rp.from_user
+            rpname = (ru.full_name or ru.first_name or "Someone") if ru else "Someone"
+            rp_media = bool(rp.photo or rp.video or rp.animation
+                            or rp.sticker or rp.audio or rp.voice or rp.document)
+            media_bytes = None
+            if rp_media:
+                tfid = _reply_thumb_file_id(rp)
+                if tfid:
+                    try:
+                        tgf = await context.bot.get_file(tfid)
+                        media_bytes = bytes(await tgf.download_as_bytearray())
+                    except Exception as e:
+                        logger.debug(f"/q reply media fetch failed: {e}")
+            reply_preview = {"name": rpname, "text": rptext[:120],
+                             "media": rp_media, "media_bytes": media_bytes}
 
-async def _avatar_data_url(context, m) -> str:
-    """Download the sender's profile photo through the bot and return it as a
-    base64 data URL (the quotly API accepts this via ``photo.url``). Telegram
-    file_ids are NOT resolvable by the remote API, so this is what actually
-    makes the avatar render. Returns "" on any failure (card still renders,
-    just without a photo)."""
     try:
-        uid = None
-        u = getattr(m, "from_user", None)
-        if u:
-            uid = u.id
-        elif getattr(m, "sender_chat", None):
-            uid = m.sender_chat.id
-        if not uid:
-            return ""
-        photos = await context.bot.get_user_profile_photos(uid, limit=1)
-        if not photos or not photos.photos:
-            return ""
-        best = photos.photos[0][-1]  # largest size of the most recent photo
-        tgf = await context.bot.get_file(best.file_id)
-        raw = bytes(await tgf.download_as_bytearray())
-        if not raw:
-            return ""
-        b64 = base64.b64encode(raw).decode("ascii")
-        return f"data:image/jpeg;base64,{b64}"
-    except Exception as e:
-        logger.debug(f"/q avatar fetch failed: {e}")
-        return ""
-
-
-async def _build_payload(context, messages, include_reply: bool,
-                         background: str) -> dict:
-    payload = {
-        "type": "quote",
-        "format": "png",
-        "backgroundColor": background or _BACKGROUND,
-        "messages": [],
-    }
-    for m in messages:
-        avatar_url = await _avatar_data_url(context, m)
-        photo = {"url": avatar_url} if avatar_url else {}
-        entry = {
-            "entities": _entities_to_payload(m),
-            "chatId": _sender_id(m),
-            "avatar": True,
-            "from": {
-                "id": _sender_id(m),
-                "name": _sender_name(m),
-                "username": _sender_username(m),
-                "type": _chat_type(m),
-                "photo": photo,
-            },
-            "text": _text_or_caption(m),
-            "replyMessage": {},
-        }
-        reply = getattr(m, "reply_to_message", None)
-        if include_reply and reply is not None:
-            entry["replyMessage"] = {
-                "name": _sender_name(reply),
-                "text": _text_or_caption(reply),
-                "chatId": _sender_id(reply),
-                "entities": _entities_to_payload(reply),
-            }
-        payload["messages"].append(entry)
-    return payload
-
-
-async def _render_quote(context, messages, include_reply: bool,
-                        background: str = _BACKGROUND) -> bytes:
-    """POST the payload to each endpoint until one returns a real image.
-    Returns raw image bytes. Raises QuotlyError if all endpoints fail."""
-    payload = await _build_payload(context, messages, include_reply, background)
-    last_err = "all quote endpoints failed"
-    async with aiohttp.ClientSession(headers=_HEADERS, timeout=_TIMEOUT) as s:
-        for url in _QUOTE_ENDPOINTS:
-            try:
-                async with s.post(url, json=payload) as r:
-                    body = await r.read()
-                    if r.status != 200:
-                        last_err = f"HTTP {r.status} from {url}"
-                        continue
-                    ctype = r.headers.get("content-type", "")
-                    if "application/json" in ctype or body[:1] == b"{":
-                        try:
-                            data = await r.json(content_type=None)
-                        except Exception:
-                            last_err = f"invalid JSON from {url}"
-                            continue
-                        img_b64 = (
-                            (data.get("result") or {}).get("image")
-                            or data.get("image")
-                        )
-                        if not img_b64:
-                            last_err = f"no image field from {url}"
-                            continue
-                        try:
-                            return base64.b64decode(img_b64)
-                        except Exception:
-                            last_err = f"bad base64 from {url}"
-                            continue
-                    if body:
-                        return body
-                    last_err = f"empty body from {url}"
-            except Exception as e:
-                last_err = f"{type(e).__name__}: {e} ({url})"
-    raise QuotlyError(last_err)
-
-
-def _looks_like_image(b: bytes) -> bool:
-    """True if `b` starts with the magic bytes of a format Telegram accepts
-    (WEBP / PNG / JPEG). The endpoints occasionally answer HTTP 200 with an
-    HTML/JSON error page; rejecting those avoids sending junk."""
-    if not b or len(b) < 12:
-        return False
-    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
-        return True
-    if b[:8] == b"\x89PNG\r\n\x1a\n":
-        return True
-    if b[:3] == b"\xff\xd8\xff":
-        return True
-    return False
-
-
-def _fresh_bio(img: bytes, name: str) -> BytesIO:
-    """A brand-new BytesIO per send attempt (a consumed stream can't be
-    re-read, so each fallback needs its own)."""
-    bio = BytesIO(img)
-    bio.name = name
-    return bio
-
-
-async def _send_quote(msg, img: bytes) -> None:
-    """Deliver the quote. Prefer a real sticker (the IotaXMusic look); if
-    Bot API rejects the raw upload (it is stricter than Pyrogram/MTProto),
-    transparently fall back to a photo — Bot API accepts photos far more
-    leniently, and the quote looks the same to the user. No chat actions."""
-    reply_kwargs = {
-        "reply_to_message_id": msg.message_id,
-        "allow_sending_without_reply": True,
-    }
-    # 1) Sticker — matches IotaXMusic's native look.
-    try:
-        await msg.reply_sticker(
-            _fresh_bio(img, "quote.webp"),
-            emoji=_QUOTE_EMOJI,
-            **reply_kwargs,
+        img_bytes = render_quote_card(
+            messages, avatar_bytes, theme=theme, mode=mode,
+            reply_preview=reply_preview, timestamp=timestamp, border=border,
+            scale=scale, crop=crop, emoji_brand=emoji, privacy=privacy,
         )
+    except QuoteRenderError as e:
+        await msg.reply_html(safe_html(str(e)))
         return
     except Exception as e:
-        logger.warning(f"/q reply_sticker rejected, falling back to photo: {e}")
-    # 2) Photo — reliable delivery path under Bot API.
+        logger.exception(f"/q render failed: {e}")
+        await msg.reply_html("❌ Couldn't generate that quote — please try again.")
+        return
+
+    file_obj = io.BytesIO(img_bytes)
+    file_obj.name = "quote.webp" if mode == "sticker" else "quote.png"
     try:
-        await msg.reply_photo(_fresh_bio(img, "quote.png"), **reply_kwargs)
-        return
+        if rate:
+            # Rated quotes are always photos so we can attach + update buttons.
+            qid = await save_quote(
+                msg.from_user.id, msg.chat_id,
+                "Anonymous" if privacy else messages[0]["name"],
+                messages[0]["text"], theme,
+            )
+            await msg.reply_photo(file_obj, caption="💬 Quote",
+                                  reply_markup=_rating_kb(qid))
+        elif mode == "sticker":
+            await msg.reply_sticker(file_obj)
+        else:
+            await msg.reply_photo(file_obj, caption="💬 Quote")
     except Exception as e:
-        logger.warning(f"/q reply_photo also failed: {e}")
-        raise
+        logger.warning(f"/q send failed: {e}")
+        try:
+            await msg.reply_html("❌ Couldn't send that quote — please try again.")
+        except Exception:
+            pass
 
 
 async def quote_sticker_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     reply = msg.reply_to_message
     if not reply:
-        await msg.reply_text(
-            "❌ Reply to a message with /q to turn it into a quote sticker!"
+        await msg.reply_html(
+            "❌ Reply to a message with /q to turn it into a quote!"
         )
         return
 
-    include_reply, count, background = _parse_args(context.args)
-    if count < 1 or count > 10:
-        await msg.reply_text("❌ Range 1-10 rakho.")
-        return
-
-    if not _text_or_caption(reply).strip():
-        await msg.reply_text(
-            "❌ Reply to a text message (a caption also works) to quote it."
-        )
-        return
-
-    try:
-        img = await _render_quote(context, [reply], include_reply,
-                                  background or _BACKGROUND)
-    except QuotlyError as e:
-        logger.warning(f"/q failed (all endpoints): {e}")
-        await _safe_reply(msg, "❌ Abhi quote nahi ban paaya, thodi der baad try karo 🥺")
-        return
-    except Exception as e:
-        logger.exception(f"/q render error: {e}")
-        await _safe_reply(msg, "❌ Abhi quote nahi ban paaya, thodi der baad try karo 🥺")
-        return
-
-    try:
-        await _send_quote(msg, img)
-    except Exception as e:
-        logger.exception(f"/q send failed: {e}")
-        await _safe_reply(
-            msg, "❌ Quote ban gaya par yahan bhej nahi paayi 🥺 "
-                 "(shayad media bhejne ki permission nahi hai)",
-        )
-
-
-async def _safe_reply(msg, text: str):
-    """Send a plain-text reply, swallowing any send error (used on the error
-    paths so a failed error-notice can't crash the handler)."""
-    try:
-        await msg.reply_text(text)
-    except Exception as e:
-        logger.debug(f"/q error-reply failed: {e}")
-
-
-# ── Argument parsing ────────────────────────────────────────────────────────
-
-def _parse_args(args) -> tuple[bool, int, str]:
-    """Parse `/q [r] [N] [color]` → (include_reply, count, background).
-
-    • 'r' / 'reply' → include the reply-context bubble.
-    • integer (1-10) → count (reserved; Bot API can't fetch threads, but we
-      still validate the range so `/q 3` doesn't error).
-    • '#rrggbb' / '#rgb' / a known colour name / 'random' → background color.
-    Invalid tokens are ignored. Returns background="" to mean "use default"."""
-    include_reply = False
+    opts = await get_settings(msg.from_user.id)
+    mode = "sticker"
+    theme = opts.get("theme", "dark")
+    border = True
+    scale = 1.0
+    crop = False
+    privacy = opts.get("privacy", False)
+    emoji = opts.get("emoji")
+    rate = opts.get("rate", False)
     count = 1
-    background = ""
-    for a in (args or []):
-        al = a.lower().strip()
-        if al in ("r", "reply"):
-            include_reply = True
+
+    for a in (context.args or []):
+        al = a.lower()
+        if al in MODES:
+            mode = "png"
+        elif al in THEME_NAMES:
+            theme = al
+        elif al in BORDER_OFF:
+            border = False
+        elif al in BORDER_ON:
+            border = True
+        elif al in RATE_ON:
+            rate = True
+        elif al in ANON_ON:
+            privacy = True
+        elif al == "color":
+            # handled below when followed by a hex value
             continue
-        if al == "random":
-            background = _random_hex()
-            continue
-        if _HEX_RE.match(al):
-            background = al
-            continue
-        if al in _KNOWN_COLOR_NAMES:
-            background = al
-            continue
-        try:
-            count = int(al)
-        except (ValueError, TypeError):
-            continue
-    return include_reply, count, background
+        elif al == "c":
+            crop = True
+        elif al.startswith("s") and al[1:]:
+            try:
+                scale = max(0.5, min(4.0, float(al[1:])))
+            except ValueError:
+                pass
+        elif al == "r":
+            pass
+        elif a.lower().startswith("#") and len(a) in (4, 7):
+            theme = "color " + a
+        elif a.isdigit():
+            n = int(a)
+            if 1 <= n <= MAX_THREAD:
+                count = n
+
+    # Validate message type.
+    body = reply.text or reply.caption or ""
+    if not body.strip():
+        if reply.sticker:
+            await msg.reply_html("❌ Can't quote a sticker — reply to a text message instead."); return
+        if reply.photo or reply.video or reply.animation:
+            await msg.reply_html("❌ Reply to a text message (a caption works too) to quote it."); return
+        if reply.voice or reply.audio:
+            await msg.reply_html("❌ Can't quote a voice/audio message — reply to text."); return
+        await msg.reply_html("❌ This message type isn't supported."); return
+    if len(body) > MAX_QUOTE_LENGTH:
+        await msg.reply_html(
+            f"❌ That message is too long to fit on a quote "
+            f"({len(body)}/{MAX_QUOTE_LENGTH} max)."
+        )
+        return
+
+    messages = await _gather_messages(update, context, reply, count)
+    if not messages:
+        await msg.reply_html("❌ Nothing quotable found in that message."); return
+
+    await _make_quote(update, context, messages, reply,
+                      dict(mode=mode, theme=theme, border=border, scale=scale,
+                           crop=crop, privacy=privacy, emoji=emoji, rate=rate))
 
 
-_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-_KNOWN_COLOR_NAMES = {
-    "white", "black", "red", "green", "blue", "yellow", "orange", "purple",
-    "pink", "gray", "grey", "cyan", "magenta", "brown", "teal", "navy",
-    "maroon", "olive", "lime", "aqua", "silver", "gold", "violet", "indigo",
-}
+async def qrand_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg = update.effective_message
+    if chat.type == "private":
+        await msg.reply_html("🎲 /qrand sirf groups mein chalao!"); return
+    try:
+        history = await context.bot.get_chat_history(chat.id, limit=200)
+    except Exception as e:
+        logger.debug(f"/qrand history failed: {e}")
+        await msg.reply_html("❌ Chat history nahi mili."); return
+    candidates = [m for m in history
+                  if (m.text or m.caption) and (m.text or m.caption).strip()
+                  and m.from_user]
+    if not candidates:
+        await msg.reply_html("❌ Is chat mein koi quotable message nahi."); return
+    pick = random.choice(candidates)
+    d = _msg_to_dict(pick)
+    await _make_quote(update, context, [d], pick, await get_settings(msg.from_user.id))
 
 
-def _random_hex() -> str:
-    return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+async def qtop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    chat = update.effective_chat
+    rows = await top_quotes(chat.id, limit=10)
+    if not rows:
+        await msg.reply_html("🏆 Is chat mein abhi koi rated quote nahi.\n"
+                              "Quote banao aur /q rate use karo!"); return
+    lines = ["🏆 <b>Tᴏᴘ Qᴜᴏᴛᴇs</b>", "━" * 18]
+    for i, r in enumerate(rows, 1):
+        text = (r.get("text") or "").replace("\n", " ")
+        if len(text) > 60:
+            text = text[:57] + "…"
+        lines.append(f"{i}. {r.get('name', '?')}: {safe_html(text)} "
+                     f"👍{r.get('up', 0)} 👎{r.get('down', 0)}")
+    await msg.reply_html("\n".join(lines))
+
+
+async def qrate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    cur = await get_settings(msg.from_user.id)
+    new = not cur.get("rate", False)
+    await set_setting(msg.from_user.id, rate=new)
+    await msg.reply_html(f"🔘 Rating {'ON' if new else 'OFF'} kar diya.\n"
+                          f"Ab /q karne par 👍/👎 buttons aayenge.")
+
+
+async def qcolor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    arg = (context.args[0] if context.args else "").lower()
+    if not arg:
+        await msg.reply_html("Usage: <code>/qcolor dark|light|white|purple|blue|telegram</code> "
+                             "ya <code>/qcolor #ff3366</code>"); return
+    theme = arg if arg in THEME_NAMES else ("color " + arg if arg.startswith("#") else arg)
+    await set_setting(msg.from_user.id, theme=theme)
+    await msg.reply_html(f"🎨 Default background set to <b>{safe_html(arg)}</b>.")
+
+
+async def qemoji_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    arg = context.args[0] if context.args else ""
+    if not arg:
+        await msg.reply_html("Usage: <code>/qemoji 💜</code> — set a corner brand emoji."); return
+    await set_setting(msg.from_user.id, emoji=arg[:4])
+    await msg.reply_html(f"✨ Emoji brand set to {arg[:4]}.")
+
+
+async def privacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    cur = await get_settings(msg.from_user.id)
+    new = not cur.get("privacy", False)
+    await set_setting(msg.from_user.id, privacy=new)
+    await msg.reply_html(f"🔒 Privacy mode {'ON' if new else 'OFF'} — "
+                          f"quotes will {'hide' if new else 'show'} the sender.")
+
+
+async def qarchive_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    reply = msg.reply_to_message
+    if not reply:
+        await msg.reply_html("❌ Archive karne ke liye kisi message par reply karo + /qarchive"); return
+    d = _msg_to_dict(reply)
+    if not d:
+        await msg.reply_html("❌ Is message mein text nahi."); return
+    opts = await get_settings(msg.from_user.id)
+    qid = await save_quote(msg.from_user.id, msg.chat_id, d["name"], d["text"],
+                           opts.get("theme", "dark"))
+    await msg.reply_html(f"📥 Quote archive kar liya! (id: <code>{qid}</code>)\n"
+                          f"Apni top quotes /qtop se dekho.")
+
+
+async def qforget_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    arg = context.args[0] if context.args else None
+    if arg:
+        ok = await forget_quote(msg.from_user.id, arg)
+        await msg.reply_html("🗑️ Quote delete kiya." if ok else "❌ Wo quote nahi mila.")
+        return
+    # No id given → delete the user's most recent archived quote.
+    try:
+        from utils.mongo_db import get_db
+        doc = await get_db()["quote_archive"].find_one(
+            {"uid": msg.from_user.id}, sort=[("ts", -1)]
+        )
+    except Exception as e:
+        logger.debug(f"/qforget lookup failed: {e}")
+        doc = None
+    if not doc:
+        await msg.reply_html("❌ Tere paas koi archived quote nahi."); return
+    ok = await forget_quote(msg.from_user.id, doc["_id"])
+    await msg.reply_html("🗑️ Latest archived quote delete kiya." if ok
+                          else "❌ Delete nahi ho saka.")
+
+
+async def quote_rate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    try:
+        _, qid, vote = q.data.split("_")
+    except Exception:
+        return
+    up = vote == "up"
+    res = await rate_quote(qid, up)
+    try:
+        await q.edit_message_reply_markup(reply_markup=_rating_kb(qid))
+        await q.edit_message_caption(
+            caption=f"💬 Quote — 👍 {res['up']}  👎 {res['down']}"
+        )
+    except Exception as e:
+        logger.debug(f"quote rate callback edit failed: {e}")

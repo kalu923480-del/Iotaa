@@ -97,9 +97,10 @@ COMMAND_GROUPS = {
         "In DMs: just message directly. In groups: @mention, reply to Iota, or say her name.",
     ],
     "🎭 Quote Stickers": [
-        "/q (reply to a text message) — turn that message into a Telegram-style quote sticker",
-        "/q r — also show the reply-context bubble above the quote",
-        "/q <#hex|colour|random> — pick a custom background colour",
+        "/q (reply to a text message) — turn that message into a styled quote sticker",
+        "/q png|dark|color #fff|border|s1.5|c|anon|rate — styling & privacy flags",
+        "/qrand — random quote from chat history · /qtop — top-rated quotes",
+        "/qrate · /qcolor <theme> · /qemoji <emoji> · /privacy · /qarchive · /qforget",
     ],
     "🛠️ Group Admin (admins only)": [
         ".warn .ban .mute .kick — moderation actions (admins only)",
