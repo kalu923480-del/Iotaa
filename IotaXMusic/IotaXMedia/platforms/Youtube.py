@@ -33,16 +33,22 @@ YOUTUBE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
 # === Helpers ===
 def _cookiefile_path() -> Optional[str]:
+    """Temp copy of cookies so CLI yt-dlp cannot rewrite the master file."""
     path = str(COOKIE_PATH)
     try:
         if not path or not os.path.exists(path) or os.path.getsize(path) < 50:
             return None
         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
             head = fh.read(64)
-        # Reject empty/placeholder files that break yt-dlp
         if not head.lstrip().startswith("# Netscape") and "youtube.com" not in head:
             return None
-        return path
+        import shutil
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(prefix="yt_cookies_cli_", suffix=".txt")
+        os.close(fd)
+        shutil.copy2(path, tmp)
+        return tmp
     except Exception:
         pass
     return None
@@ -51,6 +57,16 @@ def _cookiefile_path() -> Optional[str]:
 def _cookies_args() -> List[str]:
     path = _cookiefile_path()
     return ["--cookies", path] if path else []
+
+
+def _js_runtime_args() -> List[str]:
+    import shutil
+
+    home = os.path.expanduser("~/.deno/bin/deno")
+    deno = home if os.path.isfile(home) else shutil.which("deno")
+    if deno:
+        return ["--js-runtimes", f"deno:{deno}"]
+    return []
 
 
 async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
@@ -156,7 +172,9 @@ class YouTubeAPI:
     @capture_internal_err
     async def is_live(self, link: str) -> bool:
         prepared = self._prepare_link(link)
-        stdout, _ = await _exec_proc("yt-dlp", *(_cookies_args()), "--dump-json", prepared)
+        stdout, _ = await _exec_proc(
+            "yt-dlp", *(_cookies_args()), *(_js_runtime_args()), "--dump-json", prepared
+        )
         if not stdout:
             return False
         try:
@@ -249,6 +267,7 @@ class YouTubeAPI:
             args = [
                 "yt-dlp",
                 *(_cookies_args()),
+                *(_js_runtime_args()),
                 "--dump-json",
                 "--no-warnings",
                 "--no-update",
@@ -313,7 +332,7 @@ class YouTubeAPI:
         link = self._prepare_link(link, videoid)
         stdout, stderr = await _exec_proc(
             "yt-dlp",
-            *(_cookies_args()),
+            *(_cookies_args()), *(_js_runtime_args()),
             "-g",
             "-f",
             "best[height<=?720][width<=?1280]",
@@ -339,7 +358,7 @@ class YouTubeAPI:
 
         stdout, _ = await _exec_proc(
             "yt-dlp",
-            *(_cookies_args()),
+            *(_cookies_args()), *(_js_runtime_args()),
             "-i",
             "--get-id",
             "--flat-playlist",
@@ -444,7 +463,7 @@ class YouTubeAPI:
 
             stdout, _ = await _exec_proc(
                 "yt-dlp",
-                *(_cookies_args()),
+                *(_cookies_args()), *(_js_runtime_args()),
                 "-g",
                 "-f",
                 "best[height<=?720][width<=?1280]",

@@ -4,6 +4,7 @@ import contextlib
 import glob
 import os
 import re
+import tempfile
 from typing import Dict, Optional
 
 import aiofiles
@@ -47,6 +48,7 @@ def extract_video_id(link: str) -> str:
 
 
 def get_cookie_file() -> Optional[str]:
+    """Return a writable temp copy of cookies so yt-dlp cannot corrupt the master file."""
     try:
         path = str(_COOKIES_FILE) if _COOKIES_FILE else ""
         if not path or not os.path.exists(path) or os.path.getsize(path) < 50:
@@ -55,7 +57,14 @@ def get_cookie_file() -> Optional[str]:
             head = fh.read(120)
         if not head.lstrip().startswith("# Netscape") and "youtube.com" not in head:
             return None
-        return path
+        # yt-dlp rewrites cookiefile on exit — use a temp copy each time
+        import tempfile
+        import shutil
+
+        fd, tmp = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
+        os.close(fd)
+        shutil.copy2(path, tmp)
+        return tmp
     except Exception:
         pass
     return None
@@ -77,8 +86,8 @@ def get_ytdlp_base_opts() -> Dict[str, object]:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "overwrites": False,
-        "continuedl": True,
+        "overwrites": True,
+        "continuedl": False,
         "noprogress": True,
         "concurrent_fragment_downloads": 16,
         "http_chunk_size": 1 << 20,
@@ -88,8 +97,16 @@ def get_ytdlp_base_opts() -> Dict[str, object]:
         "cachedir": str(CACHE_DIR),
         "ignoreerrors": False,
         "merge_output_format": "mp4",
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        # Let yt-dlp pick clients; forcing android breaks cookie auth
     }
+    # Enable Deno JS runtime when available (required for modern YouTube n-sig)
+    import shutil
+
+    deno_bin = os.path.expanduser("~/.deno/bin/deno")
+    if not (os.path.isfile(deno_bin) and os.access(deno_bin, os.X_OK)):
+        deno_bin = shutil.which("deno") or ""
+    if deno_bin:
+        opts["js_runtimes"] = {"deno": {"path": deno_bin}}
     if cookiefile := get_cookie_file():
         opts["cookiefile"] = cookiefile
     return opts
@@ -197,13 +214,14 @@ def get_final_path_from_info(info: Dict) -> Optional[str]:
     ext = info.get("ext")
     if ext:
         p = f"{DOWNLOAD_DIR}/{vid}.{ext}"
-        if os.path.exists(p):
+        if os.path.exists(p) and os.path.getsize(p) > 1024 and not p.endswith(".part"):
             return p
-    matches = sorted(
-        glob.glob(f"{DOWNLOAD_DIR}/{vid}.*"),
-        key=os.path.getmtime,
-        reverse=True,
-    )
+    matches = [
+        m
+        for m in glob.glob(f"{DOWNLOAD_DIR}/{vid}.*")
+        if not m.endswith(".part") and os.path.getsize(m) > 1024
+    ]
+    matches = sorted(matches, key=os.path.getmtime, reverse=True)
     return matches[0] if matches else None
 
 
@@ -217,26 +235,44 @@ def get_last_yt_error() -> str:
 def download_with_ytdlp_sync(link: str, fmt: str) -> Optional[str]:
     global _LAST_YT_ERROR
     _LAST_YT_ERROR = ""
+    # Ensure deno is available for n-challenge
+    deno_home = os.path.expanduser("~/.deno/bin")
+    if os.path.isdir(deno_home):
+        os.environ["PATH"] = deno_home + os.pathsep + os.environ.get("PATH", "")
+    cookie_tmp = None
     try:
         opts = get_ytdlp_base_opts()
         opts["format"] = fmt
+        cookie_tmp = opts.get("cookiefile")
         with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(link, download=False)
-            if path := get_final_path_from_info(info):
+            info = ydl.extract_info(link, download=True)
+            if not info:
+                return None
+            path = get_final_path_from_info(info)
+            if path:
                 return path
-            ydl.download([link])
-            return get_final_path_from_info(info)
+            for rd in info.get("requested_downloads") or []:
+                fp = rd.get("filepath")
+                if fp and os.path.exists(fp) and not str(fp).endswith(".part"):
+                    return fp
+            return None
     except Exception as e:
         msg = str(e)
         _LAST_YT_ERROR = msg
         low = msg.lower()
-        if "sign in" in low or "not a bot" in low or "cookies" in low:
+        if "sign in" in low or "not a bot" in low or "cookies" in low or "403" in low:
             _LAST_YT_ERROR = (
-                "YouTube bot-check blocked download. "
-                "Set COOKIE_URL in .env to a Netscape youtube cookies.txt raw URL, then restart."
+                "YouTube blocked download. Update cookies.txt "
+                "(or COOKIE_URL) and ensure Deno is installed."
             )
         LOGGER.error(f"yt-dlp download failed: {_LAST_YT_ERROR}")
         return None
+    finally:
+        if cookie_tmp and str(cookie_tmp).startswith(tempfile.gettempdir()):
+            try:
+                os.remove(cookie_tmp)
+            except OSError:
+                pass
 
 
 async def run_with_semaphore(coro):

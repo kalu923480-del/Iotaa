@@ -17,3 +17,4 @@ iota_old_backup_*/
 
 # ── Local bug-report scratch files ───────────────────────────
 BUG_REPORT*.md
+**/cookies.txt
