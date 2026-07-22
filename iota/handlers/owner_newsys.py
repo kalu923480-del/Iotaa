@@ -1149,10 +1149,11 @@ async def defaultwelcome_cmd(update, context):
         return
     await set_default_welcome(text)
     db = get_db()
+    # Keep global default text-only (GIF off) unless admins opt in per-group.
     await db.welcome_settings.update_many(
-        {}, {"$set": {"custom_msg": text, "enabled": True}}
+        {}, {"$set": {"custom_msg": text, "enabled": True, "send_gif": False}}
     )
-    await _reply(update, f"🌐 Default welcome applied to all groups:\n{safe_html(text)}")
+    await _reply(update, f"🌐 Default welcome applied to all groups (text only):\n{safe_html(text)}")
 
 
 @owner_only
@@ -1163,8 +1164,11 @@ async def forcewelcome_cmd(update, context):
         return
     on = context.args[0].lower() == "on"
     db = get_db()
-    r = await db.welcome_settings.update_many({}, {"$set": {"enabled": on}})
-    await _reply(update, f"✅ Welcome {'enabled' if on else 'disabled'} in "
+    # Enabling welcome does not turn GIFs on — defaults stay text-only.
+    r = await db.welcome_settings.update_many(
+        {}, {"$set": {"enabled": on, "send_gif": False} if on else {"enabled": False}}
+    )
+    await _reply(update, f"✅ Welcome {'enabled (text only)' if on else 'disabled'} in "
                          f"<b>{r.modified_count}</b> groups.")
 
 

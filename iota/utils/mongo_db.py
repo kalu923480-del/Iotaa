@@ -360,10 +360,16 @@ async def ensure_group_settings(cid: int, title: str = "", active: bool = True,
         await get_db().group_settings.update_one(
             {"_id": cid}, {"$set": {"bot_is_admin": bool(bot_is_admin)}}
         )
-    # Welcome defaults so the welcome system has something to read.
+    # Welcome defaults: enabled, text-only (GIF off).
     await get_db().welcome_settings.update_one(
         {"_id": cid},
-        {"$setOnInsert": {"enabled": True, "custom_msg": "", "send_gif": True}},
+        {"$setOnInsert": {
+            "enabled": True,
+            "custom_msg": "",
+            "send_gif": False,
+            "send_sticker": False,
+            "welcome_buttons": [],
+        }},
         upsert=True,
     )
     return await get_db().group_settings.find_one({"_id": cid})
@@ -1096,11 +1102,13 @@ async def get_welcome_settings(cid):
     earlier missing-GIFS crash.
     """
     ws = await get_db().welcome_settings.find_one({"_id": cid})
+    # Defaults: text-only welcome (GIF off) for every group.
     base = {
         "_id": cid,
         "enabled": True,
         "custom_msg": "",
-        "send_gif": True,
+        "send_gif": False,
+        "send_sticker": False,
         "welcome_buttons": [],
     }
     if not ws:
@@ -1108,16 +1116,54 @@ async def get_welcome_settings(cid):
     base.update(ws)
     if "welcome_buttons" not in base or base["welcome_buttons"] is None:
         base["welcome_buttons"] = []
+    # Legacy docs that never stored send_gif → treat as off (text-only default)
+    if "send_gif" not in ws:
+        base["send_gif"] = False
     return base
 
 async def set_welcome_settings(cid, **kw):
     await get_db().welcome_settings.update_one({"_id":cid},{"$set":kw},upsert=True)
+
+
+# ── Welcome-sent dedupe (join event + soft first-message welcome) ───────
+
+def _welcome_key(chat_id: int, user_id: int) -> str:
+    return f"{int(chat_id)}:{int(user_id)}"
+
+
+async def was_welcomed(chat_id: int, user_id: int) -> bool:
+    """True if we already welcomed this user in this chat (recently or ever)."""
+    try:
+        doc = await get_db().welcome_sent.find_one({"_id": _welcome_key(chat_id, user_id)})
+        return bool(doc)
+    except Exception:
+        return False
+
+
+async def mark_welcomed(chat_id: int, user_id: int) -> None:
+    try:
+        await get_db().welcome_sent.update_one(
+            {"_id": _welcome_key(chat_id, user_id)},
+            {"$set": {"chat_id": int(chat_id), "user_id": int(user_id), "ts": now()}},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
+async def clear_welcomed(chat_id: int, user_id: int) -> None:
+    """Allow re-welcome after leave/rejoin."""
+    try:
+        await get_db().welcome_sent.delete_one({"_id": _welcome_key(chat_id, user_id)})
+    except Exception:
+        pass
 
 # ── Group protection ──────────────────────────────────────────────────
 
 # Default protection + linkban fields (merged over legacy docs).
 DEFAULT_PROT = {
     "enabled": True,
+    # ── Existing ─────────────────────────────────────────────────────────
     "anti_spam": True,
     "anti_link": True,
     "anti_arabic": False,
@@ -1130,16 +1176,44 @@ DEFAULT_PROT = {
     "raid_threshold": 10,
     "raid_window": 30,
     "profanity_filter": False,
+    "bad_word_mode": "contains",
     "log_channel": 0,
-    # ── Linkban (foreign invite / spam links) ─────────────────────────
+    # ── New-member gate ─────────────────────────────────────────────────
+    "newmember_gate": False,
+    "newmember_minutes": 10,
+    "newmember_action": "delete",
+    # ── Mention spam ───────────────────────────────────────────────────
+    "anti_mention": False,
+    "mention_limit": 5,
+    "mention_action": "delete",
+    # ── Name filter ─────────────────────────────────────────────────────
+    "name_filter": False,
+    "name_filter_action": "delete",
+    "name_blocklist": [],
+    # ── Channel posts only (not all forwards) ───────────────────────────
+    "anti_channel_post": False,
+    # ── Excessive CAPS ──────────────────────────────────────────────────
+    "anti_caps": False,
+    "caps_min_len": 12,
+    "caps_ratio": 0.75,
+    # ── Repeat message spam ─────────────────────────────────────────────
+    "anti_repeat": False,
+    "repeat_count": 3,
+    "repeat_window": 30,
+    # ── Raid upgrade ────────────────────────────────────────────────────
+    "raid_action": "slow",
+    "raid_mute_new": False,
+    # ── RTL / Zalgo ────────────────────────────────────────────────────
+    "anti_zalgo": False,
+    "anti_rtl": False,
+    # ── Linkban (foreign invite / spam links) ──────────────────────────
     "linkban_enabled": False,
-    "linkban_mode": "delete",       # delete | mute | warn
+    "linkban_mode": "delete",
     "linkban_mute_secs": 300,
     "linkban_allow_own": True,
     "linkban_block_urls": False,
     "link_allowlist": [],
     # ── NSFW filter ───────────────────────────────────────────────────
-    # Automatic NSFW filter (high-confidence stickers + photos)
     "nsfw_enabled": True,
     "nsfw_threshold": 90,
     "nsfw_scan_stickers": True,
@@ -1295,6 +1369,18 @@ async def add_bad_word(cid, word):
 
 async def remove_bad_word(cid, word):
     await get_db().bad_words.update_one({"_id":cid},{"$pull":{"words":word.lower()}})
+
+# ── Name blocklist ────────────────────────────────────────────────────
+
+async def get_name_blocklist(cid):
+    doc = await get_db().name_blocklist.find_one({"_id":cid})
+    return doc.get("words",[]) if doc else []
+
+async def add_name_block(cid, word):
+    await get_db().name_blocklist.update_one({"_id":cid},{"$addToSet":{"words":word.lower()}},upsert=True)
+
+async def remove_name_block(cid, word):
+    await get_db().name_blocklist.update_one({"_id":cid},{"$pull":{"words":word.lower()}})
 
 # ── Misc ──────────────────────────────────────────────────────────────
 

@@ -232,12 +232,14 @@ def main():
     from handlers.admin        import dot_admin_handler
     from handlers.welcome      import (
         new_member_handler, left_member_handler, setwelcome_cmd,
-        welcome_panel_callback
+        welcome_panel_callback, soft_welcome_handler,
     )
     from handlers.protection   import (
         protection_handler, anti_raid_handler, anti_bot_handler,
         report_cmd, reports_cmd, prot_cmd, report_callback,
+        protstatus_cmd,
         addword_cmd, removeword_cmd, badwords_cmd,
+        blockname_cmd, unblockname_cmd, namelist_cmd,
         linkban_cmd, linkallow_cmd, linkdeny_cmd,
         linkallowlist_cmd, linkcheck_cmd,
     )
@@ -771,10 +773,11 @@ def main():
 
     # ── Welcome & Protection ──────────────────────────────────────────
     for c, f in [
-        ("setwelcome",setwelcome_cmd),("prot",prot_cmd),
+        ("prot",prot_cmd),("protstatus",protstatus_cmd),
         ("report",report_cmd),("reports",reports_cmd),
         ("addword",addword_cmd),("removeword",removeword_cmd),
         ("badwords",badwords_cmd),
+        ("blockname",blockname_cmd),("unblockname",unblockname_cmd),("namelist",namelist_cmd),
         ("linkban", linkban_cmd),
         ("linkallow", linkallow_cmd),
         ("linkdeny", linkdeny_cmd),
@@ -1072,6 +1075,16 @@ def main():
     app.add_handler(MessageHandler(
         filters.StatusUpdate.LEFT_CHAT_MEMBER, clean_service_handler
     ))
+    # Soft welcome: first message from a user (covers groups where bot is
+    # NOT admin and Telegram never delivers NEW_CHAT_MEMBERS). Text-only.
+    # Low priority group so protection/locks run first.
+    app.add_handler(MessageHandler(
+        filters.ChatType.GROUPS
+        & ~filters.COMMAND
+        & ~filters.StatusUpdate.ALL
+        & ~filters.UpdateType.EDITED_MESSAGE,
+        soft_welcome_handler,
+    ), group=12)
 
     # ── Chat join requests (captured into MongoDB for admin management) ──
     app.add_handler(ChatJoinRequestHandler(chat_join_request_handler))
@@ -1249,10 +1262,14 @@ def main():
         flood_check_handler
     ), group=4)
 
-    # 3. Protection (spam/link)
+    # 3. Protection (flood/link/name/mention/caps/repeat/zalgo/…)
+    # Not text-only: newmember gate + name filter must also catch stickers/media.
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND,
-        protection_handler
+        filters.ChatType.GROUPS
+        & ~filters.COMMAND
+        & ~filters.StatusUpdate.ALL
+        & ~filters.UpdateType.EDITED_MESSAGE,
+        protection_handler,
     ), group=5)
 
     # 3b. NSFW media filter (stickers + photos)
@@ -1676,15 +1693,14 @@ async def _send_group_onboarding(context: ContextTypes.DEFAULT_TYPE, cid: int,
     else:
         text = (
             f"👋 <b>Hey {t}!</b>\n\n"
-            f"I was added <b>without admin rights</b>, so right now I can only "
-            f"read commands. Telegram does <b>not</b> send bots the "
-            f"\"new member joined\" event unless they are an admin — which means "
-            f"<b>welcome messages, goodbye, captcha and anti-raid will NOT work</b> "
-            f"in this mode.\n\n"
-            f"🔧 <b>To enable everything:</b> promote me to admin "
-            f"(even with the <i>least</i> privileges — just the admin badge is "
-            f"enough for welcome/captcha).\n\n"
-            f"Until then I'll still respond to commands like "
+            f"I was added <b>without admin rights</b>.\n"
+            f"• <b>Welcome still works</b> as <b>text-only soft welcome</b> on a "
+            f"member's <b>first message</b> (GIF off by default).\n"
+            f"• Instant join-welcome, captcha, anti-raid need admin rights "
+            f"(Telegram hides join events from non-admin bots).\n\n"
+            f"🔧 <b>Full power:</b> promote me to admin "
+            f"(even minimal privileges).\n\n"
+            f"I'll still respond to commands like "
             f"<code>/help</code> and <code>/setwelcome</code>."
         )
     try:
