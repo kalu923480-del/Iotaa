@@ -49,7 +49,7 @@ async def remove_sudo_user(client, message: Message, _):
 
 # ─── Sudo List Entry ───────────────────────────────────────
 
-@app.on_message(filters.command(["sudolist", "listsudo", "sudoers"], prefixes=["/", "!", "."]) & ~BANNED_USERS)
+@app.on_message(filters.command(["sudolist", "listsudo", "sudoers"], prefixes=["/", "!", "."]) & ~filters.user(list(BANNED_USERS)))
 async def sudoers_list(client, message: Message):
     keyboard = [[InlineKeyboardButton("๏ ᴠɪᴇᴡ sᴜᴅᴏʟɪsᴛ ๏", callback_data="sudo_list_view")]]
     reply_markup = InlineKeyboardMarkup(keyboard)

@@ -19,10 +19,13 @@ basic = {}
 
 
 def get_image(videoid):
-    if os.path.isfile(f"cache/{videoid}.png"):
+    if videoid and os.path.isfile(f"cache/{videoid}.png"):
         return f"cache/{videoid}.png"
-    else:
-        return config.YOUTUBE_IMG_URL
+    if videoid and os.path.isfile(f"cache/{videoid}_v5.png"):
+        return f"cache/{videoid}_v5.png"
+    if videoid and len(str(videoid)) == 11:
+        return config.youtube_thumb(str(videoid))
+    return config.STREAM_IMG_URL
 
 
 def get_duration(playing):
@@ -39,7 +42,7 @@ def get_duration(playing):
 @app.on_message(
     filters.command(["queue", "cqueue", "player", "cplayer", "playing", "cplaying"])
     & filters.group
-    & ~BANNED_USERS
+    & ~filters.user(list(BANNED_USERS))
 )
 @language
 async def get_queue(client, message: Message, _):
@@ -128,7 +131,7 @@ async def get_queue(client, message: Message, _):
             return
 
 
-@app.on_callback_query(filters.regex("GetTimer") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("GetTimer") & ~filters.user(list(BANNED_USERS)))
 async def quite_timer(client, CallbackQuery: CallbackQuery):
     try:
         await CallbackQuery.answer()
@@ -136,7 +139,7 @@ async def quite_timer(client, CallbackQuery: CallbackQuery):
         pass
 
 
-@app.on_callback_query(filters.regex("GetQueued") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("GetQueued") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def queued_tracks(client, CallbackQuery: CallbackQuery, _):
     callback_data = CallbackQuery.data.strip()
@@ -185,7 +188,7 @@ async def queued_tracks(client, CallbackQuery: CallbackQuery, _):
         return await CallbackQuery.edit_message_text(msg, reply_markup=buttons)
 
 
-@app.on_callback_query(filters.regex("queue_back_timer") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("queue_back_timer") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def queue_back(client, CallbackQuery: CallbackQuery, _):
     callback_data = CallbackQuery.data.strip()

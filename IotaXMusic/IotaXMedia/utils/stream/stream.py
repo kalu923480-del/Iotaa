@@ -108,7 +108,7 @@ async def stream(
                     "video" if is_video else "audio",
                     forceplay=forceplay,
                 )
-                img = await get_thumb(vidid)
+                img = await get_thumb(vidid, thumbnail)
                 button = stream_markup(_, chat_id)
                 run = await app.send_photo(
                     original_chat_id,
@@ -152,14 +152,81 @@ async def stream(
         duration_min = result["duration_min"]
         thumbnail = result["thumb"]
 
+        file_path, direct = None, None
         try:
             file_path, direct = await YouTube.download(
                 vidid, mystic, video=is_video, videoid=vidid
             )
         except Exception:
-            raise AssistantErr(_["play_14"])
+            file_path, direct = None, None
+
+        # YouTube often blocks datacenter IPs without cookies — fall back to SoundCloud
+        if not file_path and not is_video:
+            try:
+                from yt_dlp import YoutubeDL
+                from IotaXMedia.utils.downloader import yt_dlp_download
+                import asyncio
+
+                def _sc_search(q: str):
+                    opts = {
+                        "quiet": True,
+                        "no_warnings": True,
+                        "noplaylist": True,
+                        "skip_download": True,
+                        "default_search": "scsearch1",
+                    }
+                    with YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(q, download=False)
+
+                loop = asyncio.get_running_loop()
+                sc_info = await loop.run_in_executor(None, _sc_search, title)
+                entry = None
+                if sc_info:
+                    if sc_info.get("entries"):
+                        entry = next((e for e in sc_info["entries"] if e), None)
+                    elif sc_info.get("webpage_url") or sc_info.get("url"):
+                        entry = sc_info
+                sc_url = None
+                if entry:
+                    sc_url = entry.get("webpage_url") or entry.get("url")
+                    if entry.get("title"):
+                        title = str(entry["title"]).title()
+                    if entry.get("thumbnail"):
+                        thumbnail = entry["thumbnail"]
+                    if entry.get("duration"):
+                        try:
+                            sec = int(entry["duration"])
+                            duration_min = f"{sec // 60}:{sec % 60:02d}"
+                        except Exception:
+                            pass
+                if sc_url:
+                    sc_path = await yt_dlp_download(sc_url, type="audio", title=title)
+                    if sc_path:
+                        file_path, direct = sc_path, True
+                        vidid = vidid or "soundcloud"
+            except Exception:
+                pass
+
         if not file_path:
-            raise AssistantErr(_["play_14"])
+            from IotaXMedia.utils.downloader import get_last_yt_error
+            from IotaXMedia.utils.cookie_handler import COOKIE_PATH
+            import os
+
+            reason = get_last_yt_error()
+            if not reason:
+                has_cookie = (
+                    os.path.exists(str(COOKIE_PATH))
+                    and os.path.getsize(str(COOKIE_PATH)) > 50
+                )
+                reason = (
+                    "YouTube blocked download (needs COOKIE_URL). "
+                    "SoundCloud fallback also failed."
+                    if not has_cookie
+                    else "Download failed — cookies may be expired."
+                )
+            raise AssistantErr(
+                f"{_['play_14']}\n\n<code>{reason[:350]}</code>"
+            )
 
         if await is_active_chat(chat_id):
             await put_queue(
@@ -202,7 +269,7 @@ async def stream(
                 "video" if is_video else "audio",
                 forceplay=forceplay,
             )
-            img = await get_thumb(vidid)
+            img = await get_thumb(vidid, thumbnail)
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
@@ -381,7 +448,7 @@ async def stream(
                 "video" if is_video else "audio",
                 forceplay=forceplay,
             )
-            img = await get_thumb(vidid)
+            img = await get_thumb(vidid, thumbnail)
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,

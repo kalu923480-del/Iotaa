@@ -1,6 +1,6 @@
 # Authored By Iota Coders © 2025
 import re
-from typing import List, Union, Optional
+from typing import List, Optional, Tuple, Union
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -50,19 +50,21 @@ class AppleAPI:
         }
         return track_details, track_details["vidid"]
 
-    async def playlist(self, url: str, playid: Union[bool, str] = None):
+    async def playlist(
+        self, url: str, playid: Union[bool, str] = None
+    ) -> Union[Tuple[List[str], str], Tuple[bool, None]]:
         if playid:
             url = self.base + url
 
         try:
             playlist_id = url.split("playlist/")[1]
         except Exception:
-            return False
+            return False, None
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    return False
+                    return False, None
                 html = await response.text()
 
         soup = BeautifulSoup(html, "html.parser")
@@ -75,4 +77,6 @@ class AppleAPI:
             except Exception:
                 continue
 
+        if not results:
+            return False, None
         return results, playlist_id

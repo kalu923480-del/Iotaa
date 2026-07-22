@@ -17,7 +17,7 @@ checker = []
 @app.on_message(
     filters.command(["cspeed", "speed", "cslow", "slow", "playback", "cplayback"])
     & filters.group
-    & ~BANNED_USERS
+    & ~filters.user(list(BANNED_USERS))
 )
 @AdminRightsCheck
 async def playback(cli, message: Message, _, chat_id):
@@ -37,7 +37,7 @@ async def playback(cli, message: Message, _, chat_id):
     )
 
 
-@app.on_callback_query(filters.regex("SpeedUP") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("SpeedUP") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def manage_callback(client, CallbackQuery, _):
     callback_data = CallbackQuery.data.strip()

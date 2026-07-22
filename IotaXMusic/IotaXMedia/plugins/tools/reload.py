@@ -22,7 +22,7 @@ rel = {}
 @app.on_message(
     filters.command(["admincache", "reload", "refresh"], prefixes=["/", "!","."])
     & filters.group
-    & ~BANNED_USERS
+    & ~filters.user(list(BANNED_USERS))
 )
 @language
 async def reload_admin_cache(client, message: Message, _):
@@ -48,7 +48,7 @@ async def reload_admin_cache(client, message: Message, _):
 
 
 # ── /reboot ──
-@app.on_message(filters.command("reboot") & filters.group & ~BANNED_USERS)
+@app.on_message(filters.command("reboot") & filters.group & ~filters.user(list(BANNED_USERS)))
 @AdminActual
 async def restart_bot(client, message: Message, _):
     mystic = await message.reply_text(_["reload_4"].format(app.mention))

@@ -69,7 +69,7 @@ async def _query_gemini(prompt: str) -> str:
 
 
 @app.on_message(
-    filters.command(["ai", "ask", "iota"], prefixes=["/", "."]) & ~BANNED_USERS
+    filters.command(["ai", "ask", "iota"], prefixes=["/", "."]) & ~filters.user(list(BANNED_USERS))
 )
 async def ai_command(client, message: Message):
     if not AI_API_KEY:

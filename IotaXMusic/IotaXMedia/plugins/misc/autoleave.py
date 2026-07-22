@@ -25,11 +25,10 @@ async def auto_leave():
                             ChatType.GROUP,
                             ChatType.CHANNEL,
                         ]:
-                            if (
-                                i.chat.id != config.LOGGER_ID
-                                and i.chat.id != -1002077986660
-                                and i.chat.id != -1002166290494
-                            ):
+                            protected = {config.LOGGER_ID} | set(
+                                getattr(config, "PROTECTED_CHAT_IDS", set()) or set()
+                            )
+                            if i.chat.id not in protected:
                                 if left == 20:
                                     continue
                                 if not await is_active_chat(i.chat.id):

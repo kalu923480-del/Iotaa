@@ -11,18 +11,29 @@ sends, and (if enabled) the 2FA password. When done, it prints a session
 STRING — copy that value into IotaXMusic/.env as STRING_SESSION.
 """
 import os
+import sys
 from pyrogram import Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
-API_ID = int(os.getenv("API_ID", "33489956"))
-API_HASH = os.getenv("API_HASH", "6dcab6618cef41125017059e455fbec1")
+API_ID = os.getenv("API_ID", "").strip()
+API_HASH = os.getenv("API_HASH", "").strip()
 
 
 def main() -> None:
+    if not API_ID or not API_HASH:
+        print(
+            "❌ Set API_ID and API_HASH in IotaXMusic/.env "
+            "(from https://my.telegram.org) before running session.py"
+        )
+        sys.exit(1)
     print("» Generating Iota Music Bot assistant session string…")
-    with Client("iota_music_assistant", api_id=API_ID, api_hash=API_HASH) as app:
+    with Client(
+        "iota_music_assistant",
+        api_id=int(API_ID),
+        api_hash=API_HASH,
+    ) as app:
         session_string = app.export_session_string()
     print("\n✅ Session string generated. Copy everything below into .env:\n")
     print(session_string)

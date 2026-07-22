@@ -9,7 +9,7 @@ from IotaXMedia.utils.database import group_assistant
 from IotaXMedia.utils.admin_filters import admin_filter
 
 
-@app.on_message(filters.command(["vcinfo", "vcmembers"]) & filters.group & admin_filter & ~BANNED_USERS)
+@app.on_message(filters.command(["vcinfo", "vcmembers"]) & filters.group & admin_filter & ~filters.user(list(BANNED_USERS)))
 async def vc_info(client, message: Message):
     chat_id = message.chat.id
     try:

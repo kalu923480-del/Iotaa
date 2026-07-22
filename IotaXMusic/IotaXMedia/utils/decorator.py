@@ -31,6 +31,9 @@ def admin_required(*privileges: str):
             if not message.from_user:  # anonymous admin?
                 return await message.reply_text("Unhide your account to use this command.")
 
+            if message.chat.type == ChatType.PRIVATE:
+                return await message.reply_text("Use this command in groups only.")
+
             member = await message.chat.get_member(message.from_user.id)
             allowed = False
             if member.status == ChatMemberStatus.OWNER:
@@ -58,8 +61,23 @@ def _require_bot_priv(flag: str, friendly: str):
     def deco(func: Handler) -> Handler:
         @wraps(func)
         async def inner(client: Client, message: Message, *a, **kw):
-            me = await client.get_chat_member(message.chat.id, BOT_USERNAME)
-            if not (me.status == ChatMemberStatus.ADMINISTRATOR and getattr(me.privileges, flag)):
+            if message.chat.type == ChatType.PRIVATE:
+                return await message.reply_text("Use this command in groups only.")
+            try:
+                me_user = await client.get_me()
+                bot_id = me_user.id
+            except Exception:
+                bot_id = BOT_USERNAME
+            try:
+                me = await client.get_chat_member(message.chat.id, bot_id)
+            except Exception:
+                return await message.reply_text(
+                    f"I don’t have the right **{friendly}** in **{message.chat.title}**."
+                )
+            if not (
+                me.status == ChatMemberStatus.ADMINISTRATOR
+                and getattr(me.privileges, flag, False)
+            ):
                 return await message.reply_text(
                     f"I don’t have the right **{friendly}** in **{message.chat.title}**."
                 )

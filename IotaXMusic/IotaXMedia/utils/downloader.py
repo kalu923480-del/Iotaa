@@ -48,8 +48,14 @@ def extract_video_id(link: str) -> str:
 
 def get_cookie_file() -> Optional[str]:
     try:
-        if _COOKIES_FILE and os.path.exists(_COOKIES_FILE) and os.path.getsize(_COOKIES_FILE) > 0:
-            return _COOKIES_FILE
+        path = str(_COOKIES_FILE) if _COOKIES_FILE else ""
+        if not path or not os.path.exists(path) or os.path.getsize(path) < 50:
+            return None
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            head = fh.read(120)
+        if not head.lstrip().startswith("# Netscape") and "youtube.com" not in head:
+            return None
+        return path
     except Exception:
         pass
     return None
@@ -77,11 +83,12 @@ def get_ytdlp_base_opts() -> Dict[str, object]:
         "concurrent_fragment_downloads": 16,
         "http_chunk_size": 1 << 20,
         "socket_timeout": 15,
-        "retries": 1,
-        "fragment_retries": 1,
+        "retries": 2,
+        "fragment_retries": 2,
         "cachedir": str(CACHE_DIR),
-        "ignoreerrors": True,
-        "merge_output_format": "mp4"
+        "ignoreerrors": False,
+        "merge_output_format": "mp4",
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if cookiefile := get_cookie_file():
         opts["cookiefile"] = cookiefile
@@ -200,7 +207,16 @@ def get_final_path_from_info(info: Dict) -> Optional[str]:
     return matches[0] if matches else None
 
 
+_LAST_YT_ERROR: str = ""
+
+
+def get_last_yt_error() -> str:
+    return _LAST_YT_ERROR
+
+
 def download_with_ytdlp_sync(link: str, fmt: str) -> Optional[str]:
+    global _LAST_YT_ERROR
+    _LAST_YT_ERROR = ""
     try:
         opts = get_ytdlp_base_opts()
         opts["format"] = fmt
@@ -210,7 +226,16 @@ def download_with_ytdlp_sync(link: str, fmt: str) -> Optional[str]:
                 return path
             ydl.download([link])
             return get_final_path_from_info(info)
-    except Exception:
+    except Exception as e:
+        msg = str(e)
+        _LAST_YT_ERROR = msg
+        low = msg.lower()
+        if "sign in" in low or "not a bot" in low or "cookies" in low:
+            _LAST_YT_ERROR = (
+                "YouTube bot-check blocked download. "
+                "Set COOKIE_URL in .env to a Netscape youtube cookies.txt raw URL, then restart."
+            )
+        LOGGER.error(f"yt-dlp download failed: {_LAST_YT_ERROR}")
         return None
 
 
@@ -279,7 +304,12 @@ async def yt_dlp_download(link: str, type: str, title: str = "") -> Optional[str
         async def run():
             ytdlp_task = asyncio.create_task(
                 run_with_semaphore(
-                    loop.run_in_executor(None, download_with_ytdlp_sync, link, "bestaudio[ext=webm][acodec=opus]")
+                    loop.run_in_executor(
+                        None,
+                        download_with_ytdlp_sync,
+                        link,
+                        "bestaudio/best",
+                    )
                 )
             )
             api_task = asyncio.create_task(api_download_audio(link)) if USE_AUDIO_API else None
@@ -298,7 +328,12 @@ async def yt_dlp_download(link: str, type: str, title: str = "") -> Optional[str
         async def run():
             ytdlp_task = asyncio.create_task(
                 run_with_semaphore(
-                    loop.run_in_executor(None, download_with_ytdlp_sync, link, "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio)")
+                    loop.run_in_executor(
+                        None,
+                        download_with_ytdlp_sync,
+                        link,
+                        "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+                    )
                 )
             )
             api_task = asyncio.create_task(api_download_video(link)) if USE_VIDEO_API else None

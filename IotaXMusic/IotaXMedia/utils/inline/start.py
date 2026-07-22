@@ -18,6 +18,10 @@ def start_panel(_):
 
 
 def private_panel(_):
+    owner_btn = InlineKeyboardButton(
+        text=_["S_B_7"],
+        url=f"tg://user?id={config.OWNER_ID}",
+    )
     buttons = [
         [
             InlineKeyboardButton(
@@ -26,7 +30,7 @@ def private_panel(_):
             )
         ],
         [
-            InlineKeyboardButton(text=_["S_B_7"], user_id=config.OWNER_ID),
+            owner_btn,
             InlineKeyboardButton(text=_["S_B_4"], url=config.SUPPORT_CHAT),
         ],
         [

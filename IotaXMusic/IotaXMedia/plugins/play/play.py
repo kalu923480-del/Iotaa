@@ -43,7 +43,7 @@ from IotaXMedia.utils.stream.stream import stream
         ]
     )
     & filters.group
-    & ~BANNED_USERS
+    & ~filters.user(list(BANNED_USERS))
 )
 @PlayWrapper
 @capture_err
@@ -224,6 +224,15 @@ async def play_command(
                 u = url.lower()
                 internal_type = "youtube"
                 log_label = "Youtube shorts" if "youtube.com/shorts/" in u else "Youtube Track"
+                if img and str(img).startswith("http"):
+                    try:
+                        await mystic.delete()
+                        mystic = await message.reply_photo(
+                            photo=img,
+                            caption=f"⏳ <b>{(details.get('title') or 'Loading')[:60]}</b>\n\nᴘʀᴏᴄᴇssɪɴɢ...",
+                        )
+                    except Exception:
+                        pass
 
         elif await Spotify.valid(url):
             spotify = True
@@ -300,6 +309,8 @@ async def play_command(
                     details, plist_id = await Apple.playlist(url)
                 except Exception as e:
                     return await mystic.edit_text(f"{_['play_3']}\nʀᴇᴀsᴏɴ: {e}")
+                if not details or details is False:
+                    return await mystic.edit_text(_["play_3"])
 
                 plist_type = "apple"
                 img = url
@@ -414,6 +425,23 @@ async def play_command(
         internal_type = "youtube"
         log_label = "Youtube Track"
 
+        # Show real track cover ASAP (never Rickroll / placeholder)
+        track_thumb = (details or {}).get("thumb") or ""
+        if track_thumb and str(track_thumb).startswith("http"):
+            try:
+                await mystic.delete()
+                mystic = await message.reply_photo(
+                    photo=track_thumb,
+                    caption=f"⏳ <b>{(details.get('title') or 'Loading')[:60]}</b>\n\nᴘʀᴏᴄᴇssɪɴɢ...",
+                )
+            except Exception:
+                try:
+                    await mystic.edit_text(
+                        f"⏳ <b>{(details.get('title') or 'Loading')[:60]}</b>\n\nᴘʀᴏᴄᴇssɪɴɢ..."
+                    )
+                except Exception:
+                    pass
+
     if str(playmode) == "Direct":
         if not plist_type:
             if details.get("duration_min"):
@@ -458,7 +486,10 @@ async def play_command(
             )
             return await mystic.edit_text(err)
 
-        await mystic.delete()
+        try:
+            await mystic.delete()
+        except Exception:
+            pass
         return await play_logs(message, streamtype=log_label)
 
     else:
@@ -538,7 +569,7 @@ async def play_command(
                 return await play_logs(message, streamtype="URL Search Inline")
 
 
-@app.on_callback_query(filters.regex("MusicStream") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("MusicStream") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 @capture_callback_err
 async def play_music(client, CallbackQuery, _):
@@ -618,7 +649,7 @@ async def play_music(client, CallbackQuery, _):
         return await CallbackQuery.message.reply_text(err)
 
 
-@app.on_callback_query(filters.regex("AnonymousAdmin") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("AnonymousAdmin") & ~filters.user(list(BANNED_USERS)))
 @capture_callback_err
 async def anonymous_check(client, CallbackQuery):
     try:
@@ -633,7 +664,7 @@ async def anonymous_check(client, CallbackQuery):
         pass
 
 
-@app.on_callback_query(filters.regex("IotaPlaylists") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("IotaPlaylists") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 @capture_callback_err
 async def play_playlists_command(client, CallbackQuery, _):
@@ -693,6 +724,8 @@ async def play_playlists_command(client, CallbackQuery, _):
             log_label = "Spotify artist"
         elif ptype == "apple":
             result, _ = await Apple.playlist(videoid, True)
+            if not result:
+                return await mystic.edit_text(_["play_3"])
             internal_type = "playlist"
             log_label = "Apple Music playlist"
         else:
@@ -724,7 +757,7 @@ async def play_playlists_command(client, CallbackQuery, _):
         return await CallbackQuery.message.reply_text(err)
 
 
-@app.on_callback_query(filters.regex("slider") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("slider") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 @capture_callback_err
 async def slider_queries(client, CallbackQuery, _):

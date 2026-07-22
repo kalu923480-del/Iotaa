@@ -4,7 +4,9 @@ __pycache__/
 *.pyo
 
 # ── Secrets / local config (keep local only) ─────────────────
-config.py
+# Only local economy-bot secrets (not IotaXMusic/config.py)
+iota/config.py
+/config.py
 
 # ── Local SQLite database (runtime state, not source) ─────────
 iota/data/

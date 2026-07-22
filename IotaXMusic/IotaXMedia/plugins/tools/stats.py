@@ -34,7 +34,7 @@ async def _edit_media_or_reply_with_video(cbq, caption: str, reply_markup):
         )
 
 
-@app.on_message(filters.command(["stats", "gstats"]) & ~BANNED_USERS)
+@app.on_message(filters.command(["stats", "gstats"]) & ~filters.user(list(BANNED_USERS)))
 @language
 async def open_stats(client, message: Message, _):
     is_sudo = message.from_user and (message.from_user.id in SUDOERS)
@@ -46,7 +46,7 @@ async def open_stats(client, message: Message, _):
     )
 
 
-@app.on_callback_query(filters.regex(f"^{StatsCallbacks.BACK}$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(f"^{StatsCallbacks.BACK}$") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def handle_back_to_stats(client, callback_query, _):
     is_sudo = callback_query.from_user and (callback_query.from_user.id in SUDOERS)
@@ -56,7 +56,7 @@ async def handle_back_to_stats(client, callback_query, _):
     )
 
 
-@app.on_callback_query(filters.regex(f"^{StatsCallbacks.SHOW_OVERVIEW}$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(f"^{StatsCallbacks.SHOW_OVERVIEW}$") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def handle_show_overview(client, callback_query, _):
     await callback_query.answer()
@@ -78,7 +78,7 @@ async def handle_show_overview(client, callback_query, _):
     await _edit_media_or_reply_with_video(callback_query, caption, back_keyboard)
 
 
-@app.on_callback_query(filters.regex(f"^{StatsCallbacks.SHOW_BOT_STATS}$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(f"^{StatsCallbacks.SHOW_BOT_STATS}$") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def handle_show_bot_stats(client, callback_query, _):
     if callback_query.from_user.id not in SUDOERS:

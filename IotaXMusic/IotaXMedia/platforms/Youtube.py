@@ -35,8 +35,14 @@ YOUTUBE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 def _cookiefile_path() -> Optional[str]:
     path = str(COOKIE_PATH)
     try:
-        if path and os.path.exists(path) and os.path.getsize(path) > 0:
-            return path
+        if not path or not os.path.exists(path) or os.path.getsize(path) < 50:
+            return None
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            head = fh.read(64)
+        # Reject empty/placeholder files that break yt-dlp
+        if not head.lstrip().startswith("# Netscape") and "youtube.com" not in head:
+            return None
+        return path
     except Exception:
         pass
     return None
@@ -193,11 +199,35 @@ class YouTubeAPI:
 
     @capture_internal_err
     async def thumbnail(self, link: str, videoid: Union[str, bool, None] = None) -> str:
-        info = await self._fetch_video_info(self._prepare_link(link, videoid))
-        return (
-            info.get("thumbnail")
-            or info.get("thumbnails", [{}])[-1].get("url", "")
-        ).split("?")[0] if info else ""
+        from config import youtube_thumb
+
+        prepared = self._prepare_link(link, videoid)
+        info = await self._fetch_video_info(prepared)
+        thumb = ""
+        if info:
+            thumbs = info.get("thumbnails") or [{}]
+            thumb = (
+                info.get("thumbnail")
+                or (thumbs[-1].get("url") if thumbs else "")
+                or ""
+            )
+            thumb = str(thumb).split("?")[0]
+            if thumb and "telegra.ph/file/2c6d1a6f78eba6199933a" not in thumb:
+                return thumb
+            vid = info.get("id") or ""
+            if len(str(vid)) == 11:
+                return youtube_thumb(str(vid))
+        # videoid direct / extract from prepared link
+        if isinstance(videoid, str) and len(videoid.strip()) == 11:
+            return youtube_thumb(videoid.strip())
+        m = YOUTUBE_ID_RE.search(prepared.replace("https://www.youtube.com/watch?v=", ""))
+        if m:
+            return youtube_thumb(m.group(0))
+        if prepared.startswith(self.base_url):
+            vid = prepared.replace(self.base_url, "")[:11]
+            if len(vid) == 11:
+                return youtube_thumb(vid)
+        return ""
 
     @capture_internal_err
     async def track(self, link: str, videoid: Union[str, bool, None] = None) -> Tuple[Dict, str]:
@@ -211,14 +241,27 @@ class YouTubeAPI:
                     f"for query/URL: '{prepared_link}'"
                 )
         except Exception as search_err:
-            stdout, stderr = await _exec_proc(
-                "yt-dlp", *(_cookies_args()), "--dump-json", "--no-warnings", prepared_link
+            ytdlp_target = (
+                prepared_link
+                if prepared_link.startswith("http")
+                else f"ytsearch1:{prepared_link}"
             )
+            args = [
+                "yt-dlp",
+                *(_cookies_args()),
+                "--dump-json",
+                "--no-warnings",
+                "--no-update",
+            ]
+            if not prepared_link.startswith("http"):
+                args.append("--flat-playlist")
+            args.append(ytdlp_target)
+            stdout, stderr = await _exec_proc(*args)
 
             def _both_failed(details: str, search_err: Exception = search_err) -> ValueError:
                 return ValueError(
                     f"Both methods failed for '{prepared_link}':\n"
-                    f"  1. youtubesearchpython error: {search_err}\n"
+                    f"  1. search error: {search_err}\n"
                     f"{details}"
                 )
 
@@ -227,31 +270,42 @@ class YouTubeAPI:
                 raise _both_failed(f"  2. yt-dlp error: {stderr_msg}")
 
             try:
-                info = json.loads(stdout.decode())
-            except json.JSONDecodeError as json_err:
+                first_line = stdout.decode().strip().splitlines()[0]
+                info = json.loads(first_line)
+            except (json.JSONDecodeError, IndexError) as json_err:
                 raw = stdout.decode()[:400]
                 raise _both_failed(
                     f"  2. yt-dlp JSON error: {json_err}\n"
                     f"     Raw: {raw}..."
                 ) from json_err
 
-        thumb = (
-            info.get("thumbnail")
-            or info.get("thumbnails", [{}])[-1].get("url", "")
-        ).split("?")[0]
+        thumbs = info.get("thumbnails") or [{}]
+        thumb_raw = info.get("thumbnail") or (thumbs[-1].get("url") if thumbs else "") or ""
+        thumb = str(thumb_raw).split("?")[0]
+        vidid = info.get("id", "") or info.get("vidid", "")
+        link_out = (
+            info.get("webpage_url")
+            or info.get("link")
+            or info.get("url")
+            or (self.base_url + vidid if vidid else prepared_link)
+        )
+        if link_out and not str(link_out).startswith("http") and vidid:
+            link_out = self.base_url + vidid
+        dur = info.get("duration")
+        if isinstance(dur, (int, float)):
+            total = int(dur)
+            duration_min = f"{total // 60}:{total % 60:02d}"
+        else:
+            duration_min = dur if isinstance(dur, str) else None
 
         details = {
             "title": info.get("title", ""),
-            "link": info.get("webpage_url", prepared_link),
-            "vidid": info.get("id", ""),
-            "duration_min": (
-                info.get("duration")
-                if isinstance(info.get("duration"), str)
-                else None
-            ),
+            "link": link_out,
+            "vidid": vidid,
+            "duration_min": duration_min,
             "thumb": thumb,
         }
-        return details, info.get("id", "")
+        return details, vidid
 
     # === Media & Formats ===
     @capture_internal_err
@@ -401,4 +455,10 @@ class YouTubeAPI:
             return None, None
 
         p = await yt_dlp_download(link, type="audio", title=await self.title(link))
-        return (p, True) if p else (None, None)
+        if p:
+            return p, True
+        # Prefer direct stream URL when file download is blocked (cookies)
+        status, stream_url = await self.video(link)
+        if status == 1 and stream_url:
+            return stream_url, None
+        return None, None

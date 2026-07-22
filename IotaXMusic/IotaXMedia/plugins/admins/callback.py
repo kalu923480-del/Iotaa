@@ -60,7 +60,7 @@ async def unban_assistant(_, callback: CallbackQuery):
         )
 
 
-@app.on_callback_query(filters.regex("stream_admin") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("stream_admin") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def manage_callback(client, callback: CallbackQuery, _):
     data = callback.data.strip().split(None, 1)[1]
@@ -378,7 +378,7 @@ async def markup_timer():
 asyncio.create_task(markup_timer())
 
 
-@app.on_callback_query(filters.regex("close") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("close") & ~filters.user(list(BANNED_USERS)))
 async def close_menu(_, query: CallbackQuery):
     try:
         await query.answer()
@@ -390,7 +390,7 @@ async def close_menu(_, query: CallbackQuery):
         pass
 
 
-@app.on_callback_query(filters.regex("stop_downloading") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("stop_downloading") & ~filters.user(list(BANNED_USERS)))
 @ActualAdminCB
 async def stop_download(_, query: CallbackQuery, _lang):
     task = lyrical.get(query.message.id)

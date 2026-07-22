@@ -11,7 +11,7 @@ from IotaXMedia.utils.errors import capture_err
 from config import BANNED_USERS
 
 
-@app.on_message(filters.command(["channelplay"]) & filters.group & ~BANNED_USERS)
+@app.on_message(filters.command(["channelplay"]) & filters.group & ~filters.user(list(BANNED_USERS)))
 @AdminActual
 @capture_err
 

@@ -43,7 +43,7 @@ def languages_keyboard(_):
     return InlineKeyboardMarkup(rows)
 
 
-@app.on_message(filters.command(["lang", "setlang", "language"]) & ~BANNED_USERS)
+@app.on_message(filters.command(["lang", "setlang", "language"]) & ~filters.user(list(BANNED_USERS)))
 @language
 async def langs_command(client, message: Message, _):
     keyboard = languages_keyboard(_)
@@ -54,7 +54,7 @@ async def langs_command(client, message: Message, _):
         await message.reply_text(_["lang_1"], reply_markup=keyboard)
 
 
-@app.on_callback_query(filters.regex("LG") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("LG") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def languagecb(client, CallbackQuery: CallbackQuery, _):
     try:
@@ -69,7 +69,7 @@ async def languagecb(client, CallbackQuery: CallbackQuery, _):
         await CallbackQuery.edit_message_reply_markup(reply_markup=keyboard)
 
 
-@app.on_callback_query(filters.regex(r"languages:(.*?)") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"languages:(.*?)") & ~filters.user(list(BANNED_USERS)))
 @ActualAdminCB
 async def language_markup(client, CallbackQuery: CallbackQuery, _):
     lang_code = CallbackQuery.data.split(":")[1]

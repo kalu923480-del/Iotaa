@@ -34,7 +34,7 @@ from config import BANNED_USERS, OWNER_ID
 
 # ─── SETTINGS MESSAGE ──────────────────────────────────────────────
 
-@app.on_message(filters.command(["settings", "setting"]) & filters.group & ~BANNED_USERS)
+@app.on_message(filters.command(["settings", "setting"]) & filters.group & ~filters.user(list(BANNED_USERS)))
 @language
 async def settings_mar(client, message: Message, _):
     buttons = setting_markup(_)
@@ -45,7 +45,7 @@ async def settings_mar(client, message: Message, _):
 
 # ─── SETTINGS CALLBACK (HELPER) ─────────────────────────────────────
 
-@app.on_callback_query(filters.regex(r"^SETTINGS_BACK$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"^SETTINGS_BACK$") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def settings_cb(client, callback: CallbackQuery, _):
     try:
@@ -60,7 +60,7 @@ async def settings_cb(client, callback: CallbackQuery, _):
 
 # ─── SETTINGS BACK (PRIVATE vs. GROUP) ──────────────────────────────
 
-@app.on_callback_query(filters.regex(r"^SETTINGS_PRIVATE_BACK$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"^SETTINGS_PRIVATE_BACK$") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def settings_back_markup(client, callback: CallbackQuery, _):
     try:
@@ -84,7 +84,7 @@ async def settings_back_markup(client, callback: CallbackQuery, _):
 @app.on_callback_query(
     filters.regex(
         r"^(SEARCH_MODE_INFO|PLAY_TYPE_INFO|CHANNEL_MODE_INFO|AUTH_USERS_INFO|CURRENT_VOTE_INFO|VOTE_MODE_INFO|PLAYBACK_SETTINGS|AUTH_SETTINGS|VOTE_SETTINGS)$"
-    ) & ~BANNED_USERS
+    ) & ~filters.user(list(BANNED_USERS))
 )
 @languageCB
 async def without_admin_rights(client, callback: CallbackQuery, _):
@@ -150,7 +150,7 @@ async def without_admin_rights(client, callback: CallbackQuery, _):
 
 # ─── VOTE COUNT ADJUSTMENT ──────────────────────────────────────────
 
-@app.on_callback_query(filters.regex(r"^(INCREASE_VOTE_COUNT|DECREASE_VOTE_COUNT)$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"^(INCREASE_VOTE_COUNT|DECREASE_VOTE_COUNT)$") & ~filters.user(list(BANNED_USERS)))
 @ActualAdminCB
 async def vote_count_adjust(client, callback: CallbackQuery, _):
     command = callback.matches[0].group(1)
@@ -183,7 +183,7 @@ async def vote_count_adjust(client, callback: CallbackQuery, _):
 # ─── PLAYMODE / PLAYTYPE CHANGE ─────────────────────────────────────
 
 @app.on_callback_query(
-    filters.regex(r"^(TOGGLE_SEARCH_MODE|TOGGLE_CHANNEL_MODE|TOGGLE_PLAY_TYPE)$") & ~BANNED_USERS
+    filters.regex(r"^(TOGGLE_SEARCH_MODE|TOGGLE_CHANNEL_MODE|TOGGLE_PLAY_TYPE)$") & ~filters.user(list(BANNED_USERS))
 )
 @ActualAdminCB
 async def playmode_ans(client, callback: CallbackQuery, _):
@@ -246,7 +246,7 @@ async def playmode_ans(client, callback: CallbackQuery, _):
 
 # ─── AUTH USERS (AUTH / AUTHLIST) ─────────────────────────────────────
 
-@app.on_callback_query(filters.regex(r"^(TOGGLE_AUTH_MODE|VIEW_AUTH_USERS)$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"^(TOGGLE_AUTH_MODE|VIEW_AUTH_USERS)$") & ~filters.user(list(BANNED_USERS)))
 @ActualAdminCB
 async def authusers_mar(client, callback: CallbackQuery, _):
     command = callback.matches[0].group(1)
@@ -311,7 +311,7 @@ async def authusers_mar(client, callback: CallbackQuery, _):
 
 # ─── VOTE MODE CHANGE ────────────────────────────────────────────────
 
-@app.on_callback_query(filters.regex(r"^TOGGLE_VOTE_MODE$") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"^TOGGLE_VOTE_MODE$") & ~filters.user(list(BANNED_USERS)))
 @ActualAdminCB
 async def vote_change(client, callback: CallbackQuery, _):
     try:

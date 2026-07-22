@@ -27,8 +27,8 @@ def _is_authorized(user_id: int) -> bool:
 
 # ────────────────────────────────────────────────  /help entrypoints ──
 
-@app.on_message(filters.command(["help"]) & filters.private & ~BANNED_USERS)
-@app.on_callback_query(filters.regex("open_help") & ~BANNED_USERS)
+@app.on_message(filters.command(["help"]) & filters.private & ~filters.user(list(BANNED_USERS)))
+@app.on_callback_query(filters.regex("open_help") & ~filters.user(list(BANNED_USERS)))
 @LanguageStart
 async def helper_private(client: Client, update: Union[Message, types.CallbackQuery], _):
     is_cb = isinstance(update, types.CallbackQuery)
@@ -52,7 +52,7 @@ async def helper_private(client: Client, update: Union[Message, types.CallbackQu
 
 # ────────────────────────────────────────────────  group /help notice ─
 
-@app.on_message(filters.command(["help"]) & filters.group & ~BANNED_USERS)
+@app.on_message(filters.command(["help"]) & filters.group & ~filters.user(list(BANNED_USERS)))
 @LanguageStart
 async def help_com_group(client: Client, message: Message, _):
     keyboard = private_help_panel(_)
@@ -64,7 +64,7 @@ async def help_com_group(client: Client, message: Message, _):
 
 # ────────────────────────────────────────────────  main help buttons ──
 
-@app.on_callback_query(filters.regex(r"help_callback hb(\d+)_p(\d+)") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"help_callback hb(\d+)_p(\d+)") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def helper_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     match = re.match(r"help_callback hb(\d+)_p(\d+)", CallbackQuery.data)
@@ -96,7 +96,7 @@ async def helper_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
 
 # ─────────────────────────────────────────  pagination callbacks ─────
 
-@app.on_callback_query(filters.regex(r"help_next_(\d+)") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"help_next_(\d+)") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def help_next_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     if CallbackQuery.data == "help_next_2":
@@ -109,7 +109,7 @@ async def help_next_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     else:
         await CallbackQuery.answer("No more pages.", show_alert=True)
 
-@app.on_callback_query(filters.regex(r"help_prev_(\d+)") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"help_prev_(\d+)") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def help_prev_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     if CallbackQuery.data == "help_prev_1":
@@ -121,7 +121,7 @@ async def help_prev_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     else:
         await CallbackQuery.answer("No previous page.", show_alert=True)
 
-@app.on_callback_query(filters.regex(r"help_back_(\d+)") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex(r"help_back_(\d+)") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def help_back_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     page = CallbackQuery.data.split("_")[-1]
@@ -141,7 +141,7 @@ async def help_back_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
 
 # ────────────────────────────────────────  sub-topic buttons (Action) ─
 
-@app.on_callback_query(filters.regex("action_prom_1") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("action_prom_1") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def action_prom_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     await CallbackQuery.edit_message_text(
@@ -150,7 +150,7 @@ async def action_prom_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
         disable_web_page_preview=True
     )
 
-@app.on_callback_query(filters.regex("action_pun_1") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("action_pun_1") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def action_pun_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     await CallbackQuery.edit_message_text(
@@ -161,7 +161,7 @@ async def action_pun_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
 
 # ────────────────────────────────────────────────  back to start panel ─
 
-@app.on_callback_query(filters.regex("back_to_main") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("back_to_main") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 async def back_to_main_cb(client: Client, CallbackQuery: types.CallbackQuery, _):
     out = private_panel(_)

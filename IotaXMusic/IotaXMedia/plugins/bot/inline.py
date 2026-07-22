@@ -1,4 +1,5 @@
 # Authored By Iota Coders © 2025
+from pyrogram import filters
 from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -11,7 +12,7 @@ from config import BANNED_USERS
 from IotaXMedia import app
 
 
-@app.on_inline_query(~BANNED_USERS)
+@app.on_inline_query(~filters.user(list(BANNED_USERS)))
 async def inline_query_handler(client, query):
     text = query.query.strip().lower()
     answers = []

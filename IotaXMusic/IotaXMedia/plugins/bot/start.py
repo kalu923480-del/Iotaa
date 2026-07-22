@@ -55,7 +55,7 @@ async def fetch_user_pfp(user_id: int, fallback: str) -> str:
     return fallback
 
 
-@app.on_message(filters.command(["start"]) & filters.private & ~BANNED_USERS)
+@app.on_message(filters.command(["start"]) & filters.private & ~filters.user(list(BANNED_USERS)))
 @LanguageStart
 async def start_pm(client, message: Message, _):
     try:
@@ -139,8 +139,12 @@ async def start_pm(client, message: Message, _):
             return
 
     out = private_panel(_)
-    sticker_message = await message.reply_sticker(sticker=random.choice(STICKERS))
-    asyncio.create_task(delete_sticker_after_delay(sticker_message, 2))
+    if STICKERS:
+        try:
+            sticker_message = await message.reply_sticker(sticker=random.choice(STICKERS))
+            asyncio.create_task(delete_sticker_after_delay(sticker_message, 2))
+        except Exception:
+            pass
 
     served_chats_coro = get_served_chats()
     served_users_coro = get_served_users()
@@ -171,7 +175,7 @@ async def start_pm(client, message: Message, _):
         )
 
 
-@app.on_message(filters.command(["start"]) & filters.group & ~BANNED_USERS)
+@app.on_message(filters.command(["start"]) & filters.group & ~filters.user(list(BANNED_USERS)))
 @LanguageStart
 async def start_gp(client, message: Message, _):
     out = start_panel(_)

@@ -13,7 +13,7 @@ from config import BANNED_USERS
 @app.on_message(
     filters.command(["seek", "cseek", "seekback", "cseekback"])
     & filters.group
-    & ~BANNED_USERS
+    & ~filters.user(list(BANNED_USERS))
 )
 @AdminRightsCheck
 async def seek_comm(cli, message: Message, _, chat_id):

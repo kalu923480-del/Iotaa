@@ -10,7 +10,7 @@ from IotaXMedia.utils.inline import close_markup
 from config import BANNED_USERS
 
 
-@app.on_message(filters.command(["pause", "cpause"]) & filters.group & ~BANNED_USERS)
+@app.on_message(filters.command(["pause", "cpause"]) & filters.group & ~filters.user(list(BANNED_USERS)))
 @AdminRightsCheck
 async def pause_admin(cli, message: Message, _, chat_id):
     if not await is_music_playing(chat_id):

@@ -1,5 +1,7 @@
 # Authored By Iota Coders © 2025
+import asyncio
 import re
+from typing import Any, List, Tuple
 
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -26,10 +28,13 @@ class SpotifyAPI:
     async def valid(self, link: str) -> bool:
         return bool(re.search(self.regex, link or ""))
 
+    async def _run(self, fn, *args, **kwargs) -> Any:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
     async def track(self, link: str):
         if not self.spotify:
             raise RuntimeError("Spotify credentials not configured")
-        track = self.spotify.track(link)
+        track = await self._run(self.spotify.track, link)
         info = track["name"]
         for artist in track["artists"]:
             fetched = f' {artist["name"]}'
@@ -37,59 +42,65 @@ class SpotifyAPI:
                 info += fetched
         results = VideosSearch(info, limit=1)
         data = await results.next()
-        r = data["result"][0]
+        items = data.get("result") or []
+        if not items:
+            raise RuntimeError("No YouTube match for Spotify track")
+        r = items[0]
         track_details = {
-            "title": r["title"],
-            "link": r["link"],
-            "vidid": r["id"],
-            "duration_min": r["duration"],
-            "thumb": r["thumbnails"][0]["url"].split("?")[0],
+            "title": r.get("title", info),
+            "link": r.get("link", ""),
+            "vidid": r.get("id", ""),
+            "duration_min": r.get("duration"),
+            "thumb": (r.get("thumbnails") or [{}])[0].get("url", "").split("?")[0],
         }
         return track_details, track_details["vidid"]
 
-    async def playlist(self, url):
+    async def playlist(self, url) -> Tuple[List[str], str]:
         if not self.spotify:
             raise RuntimeError("Spotify credentials not configured")
-        playlist = self.spotify.playlist(url)
+        playlist = await self._run(self.spotify.playlist, url)
         playlist_id = playlist["id"]
         results = []
         for item in playlist["tracks"]["items"]:
-            music_track = item["track"]
-            info = music_track["name"]
-            for artist in music_track["artists"]:
+            music_track = item.get("track") or {}
+            info = music_track.get("name") or ""
+            for artist in music_track.get("artists") or []:
                 fetched = f' {artist["name"]}'
                 if "Various Artists" not in fetched:
                     info += fetched
-            results.append(info)
+            if info:
+                results.append(info)
         return results, playlist_id
 
-    async def album(self, url):
+    async def album(self, url) -> Tuple[List[str], str]:
         if not self.spotify:
             raise RuntimeError("Spotify credentials not configured")
-        album = self.spotify.album(url)
+        album = await self._run(self.spotify.album, url)
         album_id = album["id"]
         results = []
         for item in album["tracks"]["items"]:
-            info = item["name"]
-            for artist in item["artists"]:
+            info = item.get("name") or ""
+            for artist in item.get("artists") or []:
                 fetched = f' {artist["name"]}'
                 if "Various Artists" not in fetched:
                     info += fetched
-            results.append(info)
+            if info:
+                results.append(info)
         return results, album_id
 
-    async def artist(self, url):
+    async def artist(self, url) -> Tuple[List[str], str]:
         if not self.spotify:
             raise RuntimeError("Spotify credentials not configured")
-        artistinfo = self.spotify.artist(url)
+        artistinfo = await self._run(self.spotify.artist, url)
         artist_id = artistinfo["id"]
         results = []
-        artisttoptracks = self.spotify.artist_top_tracks(url)
-        for item in artisttoptracks["tracks"]:
-            info = item["name"]
-            for artist in item["artists"]:
+        artisttoptracks = await self._run(self.spotify.artist_top_tracks, url)
+        for item in artisttoptracks.get("tracks") or []:
+            info = item.get("name") or ""
+            for artist in item.get("artists") or []:
                 fetched = f' {artist["name"]}'
                 if "Various Artists" not in fetched:
                     info += fetched
-            results.append(info)
+            if info:
+                results.append(info)
         return results, artist_id

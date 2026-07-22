@@ -10,7 +10,7 @@ from IotaXMedia.utils.stream.stream import stream
 from config import AYU, BANNED_USERS
 
 
-@app.on_callback_query(filters.regex("LiveStream") & ~BANNED_USERS)
+@app.on_callback_query(filters.regex("LiveStream") & ~filters.user(list(BANNED_USERS)))
 @languageCB
 @capture_callback_err
 async def play_live_stream(client, CallbackQuery, _):

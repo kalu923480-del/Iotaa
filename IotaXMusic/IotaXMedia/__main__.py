@@ -58,12 +58,20 @@ async def init():
     await StreamController.start()
 
     try:
-        await StreamController.stream_call("http://docs.evostream.com/sample_content/assets/sintel1m720p.mp4")
-    except NoActiveGroupCall:
-        LOGGER("IotaXMedia").error(
-            "ᴘʟᴇᴀsᴇ ᴛᴜʀɴ ᴏɴ ᴛʜᴇ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ᴏғ ʏᴏᴜʀ ʟᴏɢ ɢʀᴏᴜᴘ/ᴄʜᴀɴɴᴇʟ.\n\nɪᴏᴛᴀ ʙᴏᴛ sᴛᴏᴘᴘᴇᴅ..."
+        await StreamController.stream_call(
+            "http://docs.evostream.com/sample_content/assets/sintel1m720p.mp4"
         )
-        exit()
+    except NoActiveGroupCall:
+        LOGGER("IotaXMedia").warning(
+            "Log group voice chat is off (or LOGGER_ID unset) — continuing without VC health-check."
+        )
+    except Exception as e:
+        LOGGER("IotaXMedia").warning(f"Startup stream check skipped: {e}")
+
+    # Sync live bot username into config for deep-links / admin checks
+    try:
+        if getattr(app, "username", None):
+            config.BOT_USERNAME = app.username
     except Exception:
         pass
 
@@ -71,10 +79,18 @@ async def init():
     LOGGER("IotaXMedia").info(
         "\x49\x6f\x74\x61\x20\x4d\x75\x73\x69\x63\x20\x52\x6f\x62\x6f\x74\x20\x53\x74\x61\x72\x74\x65\x64\x20\x53\x75\x63\x63\x65\x73\x73\x66\x75\x6c\x6c\x79\x2e\x2e\x2e"
     )
-    await idle()
-    await app.stop()
-    await userbot.stop()
-    LOGGER("IotaXMedia").info("sᴛᴏᴘᴘɪɴɢ ɪᴏᴛᴀ ᴍᴜsɪᴄ ʙᴏᴛ ...")
+    try:
+        await idle()
+    finally:
+        try:
+            await app.stop()
+        except Exception:
+            pass
+        try:
+            await userbot.stop()
+        except Exception:
+            pass
+        LOGGER("IotaXMedia").info("sᴛᴏᴘᴘɪɴɢ ɪᴏᴛᴀ ᴍᴜsɪᴄ ʙᴏᴛ ...")
 
 
 if __name__ == "__main__":
