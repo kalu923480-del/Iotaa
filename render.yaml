@@ -1,11 +1,103 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Iota monorepo — Render Blueprint (BOTH bots, 24/7 free Web Services)
+# ═══════════════════════════════════════════════════════════════════════════
+# Services:
+#   1) iota-bot    — economy / games / AI chat (iota/)
+#   2) iota-music  — Telegram music VC bot (IotaXMusic/)
+#
+# How to deploy:
+#   1. Push this repo to GitHub
+#   2. Render Dashboard → New → Blueprint → select this repo
+#   3. Fill ALL "sync: false" env vars with real secrets
+#   4. Deploy
+#
+# Free tier note:
+#   Web services sleep after ~15 min with no HTTP traffic. Both bots
+#   self-ping their own /health every 5 minutes so they stay awake 24/7.
+# ═══════════════════════════════════════════════════════════════════════════
+
 services:
+  # ── 1) Iota economy / games bot ─────────────────────────────────────────
   - type: web
     name: iota-bot
     runtime: python
     plan: free
-    buildCommand: pip install -r iota/requirements.txt && python3 -c "import sys; sys.path.insert(0,'iota'); from utils.font_manager import ensure_fonts; ensure_fonts()"
+    region: oregon
+    branch: main
+    rootDir: iota
+    buildCommand: pip install -U pip && pip install -r requirements.txt && python3 -c "from utils.font_manager import ensure_fonts; ensure_fonts()"
     startCommand: sh start.sh
-    healthCheckPath: /
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: PORT
+        value: "8080"
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: OWNER_USERNAME
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      # After first deploy, set this to https://iota-bot.onrender.com (your URL)
+      - key: WEBAPP_BASE_URL
+        sync: false
+      - key: BOT_USERNAME
+        value: Its_iotabot
+      - key: BOT_NAME
+        value: Iota
+      - key: GROQ_API_KEYS
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: GIPHY_API_KEY
+        sync: false
+      - key: GEMINI_API_KEYS
+        sync: false
+      - key: OPENROUTER_API_KEYS
+        sync: false
+      - key: UPDATE_CHANNEL_USERNAME
+        sync: false
+
+  # ── 2) Iota Music bot (Docker: ffmpeg + deno for YouTube) ───────────────
+  - type: web
+    name: iota-music
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: IotaXMusic
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
     envVars:
       - key: PORT
         value: "8080"
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: STRING_SESSION
+        sync: false
+      - key: MONGO_DB_URI
+        sync: false
+      - key: LOGGER_ID
+        sync: false
+      - key: COOKIE_URL
+        sync: false
+      - key: BOT_USERNAME
+        value: Iotamusicbot
+      - key: STRING2
+        sync: false
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      - key: AI_API_KEY
+        sync: false

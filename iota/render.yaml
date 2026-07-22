@@ -18,7 +18,7 @@ services:
     rootDir: iota           # all app code + Procfile + requirements.txt live here
     buildCommand: pip install -r requirements.txt
     startCommand: sh start.sh
-    healthCheckPath: /
+    healthCheckPath: /health
     # ── Secrets / deploy config (set real values in the Render dashboard) ──
     envVars:
       - key: PYTHON_VERSION

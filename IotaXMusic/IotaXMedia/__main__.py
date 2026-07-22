@@ -28,10 +28,22 @@ async def init():
             "ᴀᴅᴅ STRING_SESSION ᴛᴏ .env ᴛᴏ ᴇɴᴀʙʟᴇ ɪᴛ. Bᴏᴛ ɪs sᴛɪʟʟ ʀᴜɴɴɪɴɢ."
         )
 
-    # ✅ Try to fetch cookies at startup
+    # ✅ Cookies: prefer COOKIE_URL fetch; otherwise use local cookies.txt if present
     try:
-        await fetch_and_store_cookies()
-        LOGGER("IotaXMedia").info("ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs ʟᴏᴀᴅᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ ✅")
+        from IotaXMedia.utils.cookie_handler import COOKIE_PATH
+        from IotaXMedia.utils.downloader import get_cookie_file
+
+        if config.COOKIE_URL:
+            await fetch_and_store_cookies()
+            LOGGER("IotaXMedia").info("ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs ʟᴏᴀᴅᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ ✅")
+        elif COOKIE_PATH.exists() and COOKIE_PATH.stat().st_size > 50:
+            LOGGER("IotaXMedia").info(
+                f"ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs ʟᴏᴀᴅᴇᴅ ғʀᴏᴍ ʟᴏᴄᴀʟ ғɪʟᴇ ✅ ({COOKIE_PATH})"
+            )
+        else:
+            LOGGER("IotaXMedia").warning(
+                "⚠️ ɴᴏ ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs — sᴇᴛ COOKIE_URL ᴏʀ ᴘʟᴀᴄᴇ cookies.txt"
+            )
     except Exception as e:
         LOGGER("IotaXMedia").warning(f"⚠️ᴄᴏᴏᴋɪᴇ ᴇʀʀᴏʀ: {e}")
 
@@ -76,6 +88,16 @@ async def init():
         pass
 
     await StreamController.decorators()
+
+    # Render free-tier 24/7: HTTP health server + self-ping
+    try:
+        from IotaXMedia.utils.keep_alive import start_health_server, render_keepalive_job
+
+        await start_health_server()
+        asyncio.create_task(render_keepalive_job(interval=300))
+    except Exception as e:
+        LOGGER("IotaXMedia").warning(f"⚠️ Health/keep-alive not started: {e}")
+
     LOGGER("IotaXMedia").info(
         "\x49\x6f\x74\x61\x20\x4d\x75\x73\x69\x63\x20\x52\x6f\x62\x6f\x74\x20\x53\x74\x61\x72\x74\x65\x64\x20\x53\x75\x63\x63\x65\x73\x73\x66\x75\x6c\x6c\x79\x2e\x2e\x2e"
     )
