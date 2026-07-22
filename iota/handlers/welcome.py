@@ -62,14 +62,29 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         custom_msg = ws.get("custom_msg", "")
         if custom_msg:
-            # Escape the admin's custom text first (in case it has a
-            # stray "<" or ">" that isn't meant as HTML — same class of
-            # bug that broke /panel — then substitute the safe {name}/
-            # {group} placeholders back in, which are already HTML-safe.
             text = safe_html(custom_msg).replace("{name}", name_str).replace("{group}", group_str)
         else:
             tmpl = random.choice(WELCOME_TEXTS)
             text = tmpl.format(name=name_str, group=group_str)
+
+        buttons_raw = ws.get("welcome_buttons", [])
+        reply_markup = None
+        if buttons_raw:
+            kb_rows = []
+            row = []
+            for b in buttons_raw[:8]:
+                try:
+                    btn = InlineKeyboardButton(safe_html(b.get("text", "")), url=b.get("url", "#"))
+                    row.append(btn)
+                    if len(row) == 2:
+                        kb_rows.append(row)
+                        row = []
+                except Exception:
+                    continue
+            if row:
+                kb_rows.append(row)
+            if kb_rows:
+                reply_markup = InlineKeyboardMarkup(kb_rows)
 
         try:
             gif_url = None
@@ -84,10 +99,11 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     chat.id,
                     animation=gif_url,
                     caption=text,
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
                 )
             else:
-                await msg.reply_html(text)
+                await msg.reply_html(text, reply_markup=reply_markup)
 
             if ws.get("send_sticker") and WELCOME_STICKER_IDS:
                 await context.bot.send_sticker(chat.id, random.choice(WELCOME_STICKER_IDS))
@@ -152,17 +168,12 @@ def _panel_text(chat_title: str, ws: dict) -> str:
 
 
 async def setwelcome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from utils.helpers import is_admin
-    chat = update.effective_chat
-    if chat.type == "private":
-        await update.message.reply_html("🚫 Use in a group!"); return
-    if not await is_admin(update, context):
-        await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
 
-    # A non-admin bot cannot receive Telegram's "new member joined" service
-    # message, so welcome will silently never fire. Warn clearly so the admin
-    # knows to promote the bot instead of thinking the feature is broken.
-    if not await _bot_has_admin(context, chat.id):
+    if not await _bot_has_admin(context, chat_id):
         await update.message.reply_html(
             "⚠️ <b>Heads up:</b> I'm <b>not an admin</b> in this group. "
             "Telegram won't send me the \"new member joined\" event unless I'm "
@@ -172,33 +183,31 @@ async def setwelcome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args
 
-    # No args → show the interactive panel (preferred, professional UX).
     if not args:
-        ws = await get_welcome_settings(chat.id)
+        ws = await get_welcome_settings(chat_id)
         await update.message.reply_html(
-            _panel_text(chat.title, ws), reply_markup=_panel_kb(chat.id, ws)
+            _panel_text(title, ws), reply_markup=_panel_kb(chat_id, ws)
         ); return
 
-    # Text shortcuts remain available for power users / scripting.
     cmd = args[0].lower()
     if cmd == "on":
-        await set_welcome_settings(chat.id, enabled=True)
+        await set_welcome_settings(chat_id, enabled=True)
         await update.message.reply_html("✅ Welcome messages <b>enabled</b>!")
     elif cmd == "off":
-        await set_welcome_settings(chat.id, enabled=False)
+        await set_welcome_settings(chat_id, enabled=False)
         await update.message.reply_html("❌ Welcome messages <b>disabled</b>!")
     elif cmd == "gif":
         val = args[1].lower() if len(args) > 1 else "on"
-        await set_welcome_settings(chat.id, send_gif=(val == "on"))
+        await set_welcome_settings(chat_id, send_gif=(val == "on"))
         await update.message.reply_html(f"🎬 Welcome GIF: <b>{safe_html(val)}</b>")
     elif cmd == "msg":
         custom = " ".join(args[1:])
         if not custom:
             await update.message.reply_html("❌ Provide a message!"); return
-        await set_welcome_settings(chat.id, custom_msg=custom)
+        await set_welcome_settings(chat_id, custom_msg=custom)
         await update.message.reply_html(f"✅ Welcome message set!\nPreview:\n{safe_html(custom)}")
     elif cmd == "reset":
-        await set_welcome_settings(chat.id, custom_msg="", send_gif=True)
+        await set_welcome_settings(chat_id, custom_msg="", send_gif=True)
         await update.message.reply_html("✅ Welcome reset to default!")
     else:
         await update.message.reply_html("❌ Unknown option. Use /setwelcome for help.")
@@ -211,10 +220,20 @@ async def welcome_panel_callback(update: Update, context: ContextTypes.DEFAULT_T
     q = update.callback_query
     parts = q.data.split("_")
     action = parts[1]
-    chat_id = int(parts[2])
+    try:
+        chat_id = int(parts[2])
+    except (IndexError, ValueError):
+        await q.answer("Invalid action.", show_alert=True); return
 
-    if not await is_admin(update, context, q.from_user.id):
-        await q.answer("Admins only!", show_alert=True); return
+    uid = q.from_user.id
+    from config import OWNER_ID
+    if uid != OWNER_ID:
+        try:
+            from utils.group_session import is_user_group_admin
+            if not await is_user_group_admin(context.bot, chat_id, uid):
+                await q.answer("❌ Not an admin here.", show_alert=True); return
+        except Exception:
+            await q.answer("❌ Not an admin here.", show_alert=True); return
 
     ws = await get_welcome_settings(chat_id)
 
@@ -227,7 +246,6 @@ async def welcome_panel_callback(update: Update, context: ContextTypes.DEFAULT_T
                 "actually fire. Promote me to admin to activate it.",
                 show_alert=True
             )
-            # fall through to refresh the panel so the change is visible
     elif action == "gif":
         await set_welcome_settings(chat_id, send_gif=not ws.get("send_gif", True))
     elif action == "reset":
@@ -257,6 +275,20 @@ async def welcome_panel_callback(update: Update, context: ContextTypes.DEFAULT_T
     await q.answer()
     ws = await get_welcome_settings(chat_id)
     chat_title = q.message.chat.title or "this group"
+    try:
+        from utils.group_session import get_active_group
+        uid = q.from_user.id
+        active_cid = await get_active_group(uid)
+        if active_cid == chat_id and q.message.chat.type == "private":
+            chat_title = chat_title
+        else:
+            try:
+                ch = await context.bot.get_chat(chat_id)
+                chat_title = ch.title or chat_title
+            except Exception:
+                pass
+    except Exception:
+        pass
     try:
         await q.edit_message_text(
             _panel_text(chat_title, ws), parse_mode="HTML",

@@ -11,7 +11,7 @@
 ║      the command going silently unresponsive.                  ║
 ╚══════════════════════════════════════════════════════╝
 """
-import asyncio, time, logging, traceback, functools, io
+import asyncio, time, logging, traceback, functools, io, re
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.error import (RetryAfter, Forbidden, BadRequest, TelegramError,
@@ -29,7 +29,15 @@ from utils.mongo_db import (get_db, ensure_user, get_user, update_user,
 from utils.helpers import mention, fmt, mention_owner
 from utils.fonts import sc
 from utils.ai_provider import (get_all_models, get_current_models,
-                                 set_model, save_model_config_db)
+                               set_model, save_model_config_db,
+                               register_provider, unregister_provider,
+                               update_provider, add_api_keys_bulk,
+                               list_api_keys_masked, clear_provider_keys,
+                               is_builtin_provider, get_provider_info,
+                               list_providers, get_key_pool_status,
+                               get_providers_status, get_provider_priority,
+                               set_provider_priority, set_provider_enabled,
+                               test_provider_call, save_all_provider_state)
 from utils.safe_html import safe_html, placeholder
 from utils.telegram_safe import safe_call
 from utils.dm_redirect import require_dm
@@ -186,12 +194,20 @@ async def owner_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/announce all|&lt;group_id&gt; &lt;msg&gt; — announce to groups\n"
         f"🤖 <b>AI Providers:</b>\n"
         f"/providerstatus — Overview of all providers & keys\n"
+        f"/providers — alias for providerstatus (enhanced)\n"
         f"/setmodel free|premium {placeholder('model')} [provider]\n"
         f"/listmodels [provider] — /refreshmodels [provider]\n"
-        f"/addapikey {placeholder('key')} [provider]\n"
+        f"/addapikey {placeholder('provider')} {placeholder('key1')} [key2]... (bulk)\n"
+        f"/addapikey {placeholder('key')} [provider] (single, backward compat)\n"
         f"/removeapikey {placeholder('prefix')} [provider]\n"
+        f"/listkeys [provider] — masked keys only\n"
         f"/keypoolstatus [provider] — Key health\n"
-        f"/setpriority groq,gemini,openrouter,cloudflare\n"
+        f"/addprovider {placeholder('id')} {placeholder('base_url')} [name]\n"
+        f"/delprovider {placeholder('id')} — remove custom provider\n"
+        f"/setprovider {placeholder('id')} {placeholder('field')} {placeholder('value')}\n"
+        f"/testprovider {placeholder('id')} [prompt] — quick test call\n"
+        f"/providerhelp — full AI provider guide\n"
+        f"/setpriority groq,gemini,openrouter,cloudflare,...\n"
         f"/toggleprovider {placeholder('provider')}\n"
         f"/setmaxtokens {placeholder('n')}\n\n"
         f"<b>Stats:</b>\n"
@@ -877,17 +893,21 @@ async def providerstatus_cmd(update, context):
     text += f"{sc('Fallback order')}: " + " → ".join(priority) + "\n\n"
     for p in providers:
         icon = "🟢" if p["enabled"] else "⚪"
+        custom_badge = " 🆕" if p.get("custom") else ""
         key_info = f"{p['healthy_keys']}/{p['key_count']} {sc('healthy')}" if p["key_count"] else sc("no keys")
         text += (
-            f"{icon} <b>{p['name']}</b> ({p['id']})\n"
+            f"{icon} <b>{p['name']}</b> ({p['id']}){custom_badge}\n"
             f"   {sc('Keys')}: {key_info}\n"
+            f"   {sc('Base')}: <code>{safe_html(p.get('base_url', ''))}</code>\n"
             f"   {sc('Free')}: <code>{safe_html(p['free_model'])}</code>\n"
             f"   {sc('Premium')}: <code>{safe_html(p['premium_model'])}</code>\n\n"
         )
     text += (
-        f"{sc('Add a key')}: /addapikey &lt;key&gt; &lt;provider&gt;\n"
-        f"{sc('Reorder priority')}: /setpriority groq,gemini,openrouter,cloudflare\n"
-        f"{sc('Enable/disable')}: /toggleprovider &lt;provider&gt;"
+        f"{sc('Add a key')}: /addapikey &lt;provider&gt; &lt;key1&gt; [key2]...\n"
+        f"{sc('Add custom provider')}: /addprovider &lt;id&gt; &lt;base_url&gt; [name]\n"
+        f"{sc('Reorder priority')}: /setpriority " + ",".join(priority) + "\n"
+        f"{sc('Enable/disable')}: /toggleprovider &lt;provider&gt;\n"
+        f"{sc('Full guide')}: /providerhelp"
     )
     await update.message.reply_html(text)
 
@@ -898,21 +918,36 @@ async def setmodel_cmd(update, context):
     args = context.args
     if len(args) < 2:
         cfg = get_current_models()
+        from utils.ai_provider import list_providers
         text = (
             f"🤖 <b>{sc('AI Model Settings')}</b>\n\n"
             f"{sc('Current free')}: <code>{safe_html(cfg.get('free_model',''))}</code>\n"
             f"{sc('Current premium')}: <code>{safe_html(cfg.get('premium_model',''))}</code>\n\n"
             f"Usage: /setmodel free|premium {placeholder('model')} [provider]\n"
-            f"{sc('Providers')}: groq, gemini, openrouter, cloudflare (default: groq)\n"
+            f"{sc('Providers')}: {', '.join(list_providers())} (default: groq)\n"
             f"{sc('See live options')}: /listmodels"
         )
         await update.message.reply_html(text); return
-    tier = args[0].lower(); provider = args[-1].lower() if args[-1].lower() in ("groq", "gemini", "openrouter", "cloudflare") else "groq"
-    model_end = len(args) if provider == "groq" and args[-1].lower() not in ("groq", "gemini", "openrouter", "cloudflare") else len(args) - 1
-    model = " ".join(args[1:model_end]) if model_end > 1 else " ".join(args[1:])
+    tier = args[0].lower()
+    from utils.ai_provider import list_providers
+    known_providers = set(list_providers())
+    # Parse: /setmodel free|premium <model...> [provider]
+    # Only treat the LAST token as provider if it is a known provider id
+    # AND there is at least one model token before it.
+    if len(args) >= 3 and args[-1].lower() in known_providers:
+        provider = args[-1].lower()
+        model = " ".join(args[1:-1]).strip()
+    else:
+        provider = "groq"
+        model = " ".join(args[1:]).strip()
     if tier not in ("free", "premium"):
         await update.message.reply_html(
             f"❌ Use: /setmodel free|premium {placeholder('model')} [provider]"
+        ); return
+    if not model:
+        await update.message.reply_html(
+            f"❌ {sc('Model name required.')}\n"
+            f"Usage: /setmodel free|premium {placeholder('model')} [provider]"
         ); return
     try:
         set_model(tier, model, provider=provider)
@@ -983,30 +1018,77 @@ async def setmaxtokens_cmd(update, context):
 
 @owner_only
 async def addapikey_cmd(update, context):
-    """Owner: /addapikey <key> [provider] — adds a key to a provider's pool.
-    Provider defaults to groq if not specified."""
-    from utils.ai_provider import add_api_key, save_api_keys_db, list_providers
+    from utils.ai_provider import add_api_key, add_api_keys_bulk, save_api_keys_db, list_providers
     if not context.args:
-        links = "\n".join(f"  • {p}: {_PROVIDER_SETUP_LINKS[p]}" for p in list_providers())
+        links = "\n".join(f"  • {p}: {_PROVIDER_SETUP_LINKS[p]}" for p in list_providers() if p in _PROVIDER_SETUP_LINKS)
         await update.message.reply_html(
-            "🔑 " + sc("Usage: /addapikey <key> [provider]") + "\n" +
+            "🔑 " + sc("Usage: /addapikey <key> [provider] (single)") + "\n" +
+            sc("Or") + ": /addapikey <provider> <key1> [key2]... (bulk)\n\n" +
             sc("Providers") + f": {', '.join(list_providers())} " + sc("(default: groq)") + "\n\n" +
             sc("Get a free key") + ":\n" + links
         ); return
-    key = context.args[0].strip()
-    provider = context.args[1].lower() if len(context.args) > 1 else "groq"
-    if provider not in list_providers():
+    args = context.args
+    known = set(list_providers())
+
+    def _split_keys(tokens):
+        """Support space- and/or comma-separated keys."""
+        out = []
+        for t in tokens:
+            for part in t.replace(",", " ").split():
+                part = part.strip()
+                if part:
+                    out.append(part)
+        return out
+
+    # Preferred bulk: /addapikey <provider> <key1> [key2]...
+    if len(args) >= 2 and args[0].lower() in known:
+        provider = args[0].lower()
+        keys = _split_keys(args[1:])
+        try:
+            added, skipped = add_api_keys_bulk(keys, provider=provider)
+        except ValueError as e:
+            await update.message.reply_html(f"❌ {safe_html(str(e))}"); return
+        await save_api_keys_db()
+        await update.message.reply_html(
+            f"✅ {sc('Added')} <b>{added}</b> {sc('key(s) to')} <b>{provider}</b>. "
+            f"({sc('Skipped')}: {skipped})\n"
+            f"{sc('Check')}: /keypoolstatus {provider}"
+        )
+        return
+
+    # Backward compat: /addapikey <key> [provider]
+    # Also: /addapikey <key1,key2,key3> [provider]
+    keys = _split_keys(args)
+    provider = "groq"
+    # If last token is a known provider and we have more than one token, treat as provider
+    if len(keys) >= 2 and keys[-1].lower() in known:
+        provider = keys[-1].lower()
+        keys = keys[:-1]
+    if provider not in known:
         await update.message.reply_html(
             f"❌ {sc('Unknown provider.')} {sc('Options')}: {', '.join(list_providers())}"
         ); return
+    if len(keys) > 1:
+        try:
+            added, skipped = add_api_keys_bulk(keys, provider=provider)
+        except ValueError as e:
+            await update.message.reply_html(f"❌ {safe_html(str(e))}"); return
+        await save_api_keys_db()
+        await update.message.reply_html(
+            f"✅ {sc('Added')} <b>{added}</b> {sc('key(s) to')} <b>{provider}</b>. "
+            f"({sc('Skipped')}: {skipped})"
+        )
+        return
+    key = keys[0] if keys else ""
     try:
         ok = add_api_key(key, provider=provider)
     except ValueError as e:
         await update.message.reply_html(f"❌ {safe_html(str(e))}"); return
     await save_api_keys_db()
     if ok:
+        masked = f"{key[:7]}...{key[-4:]}" if len(key) > 12 else "***"
         await update.message.reply_html(
-            f"✅ {sc('API key added to')} <b>{provider}</b>! ({key[:7]}...{key[-4:]})\n" +
+            f"✅ {sc('API key added to')} <b>{provider}</b>! ({masked})\n" +
             sc("Check status with") + " /providerstatus"
         )
     else:
@@ -1015,7 +1097,8 @@ async def addapikey_cmd(update, context):
 
 @owner_only
 async def removeapikey_cmd(update, context):
-    """Owner: /removeapikey <key_prefix> [provider] — removes a key."""
+    """Owner: /removeapikey <key_prefix> [provider] — removes a key.
+    Persist to Mongo so the key stays gone across restarts (DB is source of truth)."""
     from utils.ai_provider import remove_api_key, save_api_keys_db, list_providers
     if not context.args:
         await update.message.reply_html(
@@ -1027,9 +1110,12 @@ async def removeapikey_cmd(update, context):
             f"❌ {sc('Unknown provider.')} {sc('Options')}: {', '.join(list_providers())}"
         ); return
     ok = remove_api_key(context.args[0].strip(), provider=provider)
-    await save_api_keys_db()
+    await save_api_keys_db()  # full pool snapshot → DB replaces env on next boot
     if ok:
-        await update.message.reply_html(f"🗑️ {sc('Key removed from')} <b>{provider}</b>.")
+        await update.message.reply_html(
+            f"🗑️ {sc('Key removed from')} <b>{provider}</b>.\n"
+            f"{sc('Saved — will stay removed after restart.')}"
+        )
     else:
         await update.message.reply_html("❌ " + sc("No matching key found."))
 
@@ -1072,18 +1158,24 @@ async def keypoolstatus_cmd(update, context):
 @owner_only
 async def setpriority_cmd(update, context):
     """Owner: /setpriority groq,gemini,openrouter,cloudflare — sets the
-    fallback order providers are tried in."""
+    fallback order providers are tried in. Must list EVERY registered
+    provider id exactly once (including custom ones)."""
     from utils.ai_provider import set_provider_priority, get_provider_priority, list_providers
+    all_pids = list_providers()
     if not context.args:
         await update.message.reply_html(
             f"🔀 {sc('Current priority')}: {' → '.join(get_provider_priority())}\n\n"
-            f"{sc('Usage')}: /setpriority groq,gemini,openrouter,cloudflare"
+            f"{sc('Usage')}: /setpriority {','.join(all_pids)}\n"
+            f"{sc('Must include every provider exactly once')}."
         ); return
-    order = [p.strip().lower() for p in " ".join(context.args).split(",")]
+    # Accept comma and/or space separated ids
+    raw = " ".join(context.args).replace(",", " ")
+    order = [p.strip().lower() for p in raw.split() if p.strip()]
     ok = set_provider_priority(order)
     if not ok:
         await update.message.reply_html(
-            f"❌ {sc('Must include every provider exactly once')}: {', '.join(list_providers())}"
+            f"❌ {sc('Must include every provider exactly once')}:\n"
+            f"<code>{','.join(all_pids)}</code>"
         ); return
     await save_model_config_db()
     await update.message.reply_html(f"✅ {sc('New priority')}: {' → '.join(order)}")
@@ -1109,6 +1201,189 @@ async def toggleprovider_cmd(update, context):
     await save_model_config_db()
     state = sc("disabled") if current else sc("enabled")
     await update.message.reply_html(f"✅ <b>{provider}</b> {sc('is now')} {state}.")
+
+
+@owner_only
+async def providers_cmd(update, context):
+    await providerstatus_cmd(update, context)
+
+
+@owner_only
+async def addprovider_cmd(update, context):
+    """Owner: /addprovider <id> <base_url> [name] — register a new
+    OpenAI-compatible provider (Together, Fireworks, Mistral, DeepSeek,
+    Ollama, etc.)."""
+    from utils.ai_provider import register_provider, save_model_config_db, save_api_keys_db, list_providers
+    if len(context.args) < 2:
+        await update.message.reply_html(
+            f"🔧 {sc('Usage')}: /addprovider &lt;id&gt; &lt;base_url&gt; [name]\n"
+            f"Example: <code>/addprovider together https://api.together.xyz/v1 Together AI</code>\n"
+            f"{sc('ID')}: lowercase a-z, 0-9, underscore only (no spaces)"
+        ); return
+    pid = context.args[0].lower().strip()
+    base_url = context.args[1].strip().rstrip("/")
+    name = " ".join(context.args[2:]).strip() if len(context.args) > 2 else pid
+    if not re.match(r'^[a-z0-9_]+$', pid):
+        await update.message.reply_html("❌ " + sc("ID must be lowercase a-z, 0-9, underscore only.")); return
+    if not base_url.startswith("http://") and not base_url.startswith("https://"):
+        await update.message.reply_html(
+            "❌ " + sc("base_url must start with http:// or https://")
+        ); return
+    if pid in list_providers():
+        await update.message.reply_html(f"❌ Provider <b>{pid}</b> already exists."); return
+    try:
+        ok = register_provider(pid, name, base_url=base_url, custom=True)
+    except ValueError as e:
+        await update.message.reply_html(f"❌ {safe_html(str(e))}"); return
+    if not ok:
+        await update.message.reply_html("❌ " + sc("Failed to register provider.")); return
+    await save_all_provider_state()
+    await update.message.reply_html(
+        f"✅ Provider <b>{safe_html(name)}</b> ({pid}) added!\n"
+        f"{sc('Base URL')}: <code>{safe_html(base_url)}</code>\n\n"
+        f"1️⃣ /addapikey {pid} &lt;key&gt;\n"
+        f"2️⃣ /setprovider {pid} free_model &lt;model&gt;\n"
+        f"3️⃣ /setprovider {pid} premium_model &lt;model&gt;\n"
+        f"4️⃣ /testprovider {pid}\n"
+        f"5️⃣ /setpriority {','.join(list_providers())}"
+    )
+
+
+@owner_only
+async def delprovider_cmd(update, context):
+    """Owner: /delprovider <id> — remove a custom provider."""
+    from utils.ai_provider import unregister_provider, save_model_config_db, save_api_keys_db, list_providers
+    if not context.args:
+        await update.message.reply_html(f"🔧 {sc('Usage')}: /delprovider &lt;id&gt;"); return
+    pid = context.args[0].lower()
+    if pid not in list_providers():
+        await update.message.reply_html(
+            f"❌ {sc('Unknown provider.')} {sc('Options')}: {', '.join(list_providers())}"
+        ); return
+    ok = unregister_provider(pid)
+    if not ok:
+        await update.message.reply_html(f"❌ Cannot remove built-in provider <b>{pid}</b>."); return
+    await save_model_config_db()
+    await save_api_keys_db()
+    await update.message.reply_html(f"🗑️ Provider <b>{pid}</b> removed!")
+
+
+@owner_only
+async def setprovider_cmd(update, context):
+    """Owner: /setprovider <id> <field> <value> — update a provider setting."""
+    from utils.ai_provider import update_provider, save_model_config_db, list_providers
+    if len(context.args) < 3:
+        await update.message.reply_html(
+            f"🔧 {sc('Usage')}: /setprovider &lt;id&gt; &lt;field&gt; &lt;value&gt;\n"
+            f"{sc('Fields')}: name, base_url, free_model, premium_model, enabled, account_id\n"
+            f"{sc('Providers')}: {', '.join(list_providers())}"
+        ); return
+    pid = context.args[0].lower()
+    field = context.args[1].lower()
+    value = " ".join(context.args[2:])
+    if pid not in list_providers():
+        await update.message.reply_html(
+            f"❌ {sc('Unknown provider.')} {sc('Options')}: {', '.join(list_providers())}"
+        ); return
+    if field not in {"name", "base_url", "free_model", "premium_model", "enabled", "account_id"}:
+        await update.message.reply_html(
+            f"❌ {sc('Invalid field.')} {sc('Fields')}: name, base_url, free_model, premium_model, enabled, account_id"
+        ); return
+    if field == "enabled":
+        value = value.lower() in ("true", "1", "yes", "on")
+    elif field == "base_url":
+        value = value.strip().rstrip("/")
+        if not value.startswith("http://") and not value.startswith("https://"):
+            await update.message.reply_html(
+                "❌ " + sc("base_url must start with http:// or https://")
+            ); return
+    ok = update_provider(pid, **{field: value})
+    if not ok:
+        await update.message.reply_html(f"❌ {sc('Failed to update provider.')}"); return
+    await save_model_config_db()
+    await update.message.reply_html(
+        f"✅ <b>{pid}</b> {field} → <code>{safe_html(str(value))}</code>"
+    )
+
+
+@owner_only
+async def listkeys_cmd(update, context):
+    """Owner: /listkeys [provider] — show masked API keys."""
+    from utils.ai_provider import list_api_keys_masked, list_providers
+    provider = context.args[0].lower() if context.args else None
+    if provider and provider not in list_providers():
+        await update.message.reply_html(
+            f"❌ {sc('Unknown provider.')} {sc('Options')}: {', '.join(list_providers())}"
+        ); return
+    masked = list_api_keys_masked(provider)
+    lines = []
+    for pid, keys in masked.items():
+        if not keys:
+            continue
+        lines.append(f"<b>{pid}</b> ({len(keys)} {sc('keys')})\n  " + "\n  ".join(f"• <code>{k}</code>" for k in keys))
+    if not lines:
+        await update.message.reply_html("🔑 " + sc("No API keys configured for any provider!")); return
+    await update.message.reply_html("🔑 <b>API Keys (masked)</b>\n\n" + "\n\n".join(lines))
+
+
+@owner_only
+async def testprovider_cmd(update, context):
+    """Owner: /testprovider <id> [prompt] — make a quick test call to one provider."""
+    from utils.ai_provider import list_providers
+    provider = context.args[0].lower() if context.args else "groq"
+    prompt = " ".join(context.args[1:]) if len(context.args) > 1 else "Say 'ok' to confirm you work."
+    if provider not in list_providers():
+        await update.message.reply_html(
+            f"❌ {sc('Unknown provider.')} {sc('Options')}: {', '.join(list_providers())}"
+        ); return
+    msg = await update.message.reply_html(f"🔄 {sc('Testing')} <b>{provider}</b>...")
+    try:
+        ok, result = await test_provider_call(provider, prompt)
+        if ok:
+            await msg.edit_text(
+                f"✅ <b>{provider}</b> responded:\n\n{result}",
+                parse_mode="HTML"
+            )
+        else:
+            await msg.edit_text(f"❌ <b>{provider}</b> test failed:\n{result}", parse_mode="HTML")
+    except Exception as e:
+        await msg.edit_text(f"❌ Test error: {safe_html(str(e))}", parse_mode="HTML")
+
+
+@owner_only
+async def providerhelp_cmd(update, context):
+    """Owner: full AI provider management guide."""
+    from utils.ai_provider import list_providers
+    await update.message.reply_html(
+        "🤖 <b>AI Provider Management Guide</b>\n\n"
+        "<b>Add a custom provider:</b>\n"
+        f"<code>/addprovider &lt;id&gt; &lt;base_url&gt; [name]</code>\n"
+        "Example: <code>/addprovider together https://api.together.xyz/v1 Together AI</code>\n"
+        f"{sc('ID')}: lowercase a-z, 0-9, underscore only\n\n"
+        "<b>Remove a custom provider:</b>\n"
+        f"<code>/delprovider &lt;id&gt;</code>\n\n"
+        "<b>Update provider settings:</b>\n"
+        f"<code>/setprovider &lt;id&gt; &lt;field&gt; &lt;value&gt;</code>\n"
+        "Fields: name, base_url, free_model, premium_model, enabled, account_id\n"
+        f"Example: <code>/setprovider together free_model meta-llama/Llama-3-8b-chat-hf</code>\n\n"
+        "<b>Manage API keys:</b>\n"
+        f"<code>/addapikey &lt;provider&gt; &lt;key1&gt; [key2]...</code> — bulk add\n"
+        f"<code>/addapikey &lt;key&gt; [provider]</code> — single add (backward compat)\n"
+        f"<code>/removeapikey &lt;prefix&gt; [provider]</code> — remove by prefix\n"
+        f"<code>/listkeys [provider]</code> — masked keys\n"
+        f"<code>/keypoolstatus [provider]</code> — key health\n\n"
+        "<b>View providers:</b>\n"
+        f"<code>/providerstatus</code> or <code>/providers</code> — full overview\n"
+        f"<code>/listmodels [provider]</code> — available models\n"
+        f"<code>/refreshmodels [provider]</code> — force refresh\n"
+        f"<code>/testprovider &lt;id&gt; [prompt]</code> — quick test call\n\n"
+        "<b>Priority and toggles:</b>\n"
+        f"<code>/setpriority groq,gemini,openrouter,cloudflare,...</code>\n"
+        f"<code>/setmodel free|premium &lt;model&gt; [provider]</code>\n"
+        f"<code>/toggleprovider &lt;provider&gt;</code>\n"
+        f"<code>/setmaxtokens &lt;n&gt;</code>\n\n"
+        f"<b>Provider IDs:</b> {', '.join(list_providers())}"
+    )
 
 
 # ── /scan — hidden owner command ───────────────────────────────────────────────

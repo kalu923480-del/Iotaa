@@ -36,6 +36,15 @@ def xp_level(xp: int) -> int:
         xp -= lv * XP_PER_LEVEL; lv += 1
     return lv
 
+
+def xp_progress(xp: int) -> tuple:
+    """(level, into, needed) — delegate to utils.xp.xp_progress or implement same formula"""
+    from utils.xp import xp_for_level
+    lv = xp_level(xp)
+    into = xp - xp_for_level(lv)
+    needed = xp_for_level(lv + 1) - xp
+    return lv, into, needed
+
 def rank_title(lv: int) -> str:
     t = {1:"Rookie",2:"Beginner",3:"Fighter",4:"Warrior",5:"Elite",
          6:"Champion",7:"Legend",8:"Master",9:"GrandMaster",10:"Emperor"}
@@ -93,13 +102,25 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, uid=None)
     # of @admin_only in utils/permissions.py so the two systems never
     # disagree about who counts as privileged.
     from config import OWNER_ID
-    if uid == OWNER_ID:
+    if int(uid) == int(OWNER_ID):
         return True
+    chat = update.effective_chat
+    # In groups: check membership in that chat.
+    # In DMs: check membership in the user's *active group* (DM group panel).
     try:
-        m = await context.bot.get_chat_member(update.effective_chat.id, uid)
-        return m.status in ("administrator","creator")
+        if chat and chat.type in ("group", "supergroup"):
+            m = await context.bot.get_chat_member(chat.id, uid)
+            return m.status in ("administrator", "creator")
+        if chat and chat.type == "private":
+            from utils.group_session import get_active_group
+            cid = await get_active_group(uid)
+            if cid is None:
+                return False
+            m = await context.bot.get_chat_member(cid, uid)
+            return m.status in ("administrator", "creator")
     except Exception:
         return False
+    return False
 
 async def resolve_target(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list):
     """
@@ -138,6 +159,48 @@ async def resolve_target(update: Update, context: ContextTypes.DEFAULT_TYPE, arg
                 pass
             return None, None, rest
     return None, None, args
+
+async def is_admin_of(bot, chat_id: int, user_id: int) -> bool:
+    from config import OWNER_ID
+    if int(user_id) == int(OWNER_ID):
+        return True
+    try:
+        m = await bot.get_chat_member(chat_id, user_id)
+        return m.status in ("administrator", "creator")
+    except Exception:
+        return False
+
+
+async def resolve_target_chat(update, context, *, need_admin: bool = True):
+    """
+    Resolve which group a command should act on.
+    Returns (chat_id: int|None, title: str, err: str|None)
+    - In group/supergroup: use effective_chat
+    - In private: use active group from group_session; verify admin if need_admin
+    """
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type in ("group", "supergroup"):
+        return chat.id, chat.title or f"Group {chat.id}", None
+    if chat.type != "private":
+        return None, "", "🚫 Use in a group or DM!"
+    try:
+        from utils.group_session import get_active_group, is_user_group_admin
+        cid = await get_active_group(user.id)
+        if cid is None:
+            return None, "", "🔗 Pehle /mygroups se group select karo."
+        title = f"Group {cid}"
+        try:
+            ch = await context.bot.get_chat(cid)
+            title = ch.title or title
+        except Exception:
+            pass
+        if need_admin and not await is_user_group_admin(context.bot, cid, user.id):
+            return None, "", "❌ Tum is group ke admin nahi ho."
+        return cid, title, None
+    except Exception:
+        return None, "", "⚠️ Could not resolve group. Try /mygroups."
+
 
 async def delete_later(bot, cid, mid, delay=300):
     await asyncio.sleep(delay)

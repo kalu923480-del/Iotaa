@@ -78,6 +78,7 @@ DEFAULT_USER = {
     "protected_until":0, "dead_until":0, "wallet":0, "is_banned":False,
     "free_gem_claimed":False, "custom_title":"",
     "name_history":[], "username_history":[],
+    "clan_id":"",
 }
 
 async def ensure_user(uid, username="", full_name=""):
@@ -319,6 +320,11 @@ DEFAULT_GROUP_SETTINGS = {
     "lang": "en",
     "tracked_at": 0,
     "active": True,
+    "nightmode_enabled": False,
+    "nightmode_start": "23:00",
+    "nightmode_end": "07:00",
+    "forcesub_channel": "",
+    "welcome_buttons": [],
 }
 
 
@@ -364,8 +370,14 @@ async def ensure_group_settings(cid: int, title: str = "", active: bool = True,
 
 
 async def get_group_settings(cid: int):
-    """Return a group_settings doc (or None) for a chat id."""
-    return await get_db().group_settings.find_one({"_id": cid})
+    """Return a group_settings doc merged over DEFAULT_GROUP_SETTINGS so
+    legacy docs never miss new fields (nightmode, forcesub, etc.)."""
+    doc = await get_db().group_settings.find_one({"_id": cid})
+    if not doc:
+        return None
+    merged = dict(DEFAULT_GROUP_SETTINGS)
+    merged.update(doc)
+    return merged
 
 
 async def is_bot_admin_in_group(cid: int) -> bool:
@@ -1083,27 +1095,149 @@ async def get_welcome_settings(cid):
     a single handler could load. This is the same class of bug as the
     earlier missing-GIFS crash.
     """
-    ws = await get_db().welcome_settings.find_one({"_id":cid})
-    return ws or {"_id":cid,"enabled":True,"custom_msg":"","send_gif":True}
+    ws = await get_db().welcome_settings.find_one({"_id": cid})
+    base = {
+        "_id": cid,
+        "enabled": True,
+        "custom_msg": "",
+        "send_gif": True,
+        "welcome_buttons": [],
+    }
+    if not ws:
+        return base
+    base.update(ws)
+    if "welcome_buttons" not in base or base["welcome_buttons"] is None:
+        base["welcome_buttons"] = []
+    return base
 
 async def set_welcome_settings(cid, **kw):
     await get_db().welcome_settings.update_one({"_id":cid},{"$set":kw},upsert=True)
 
 # ── Group protection ──────────────────────────────────────────────────
 
+# Default protection + linkban fields (merged over legacy docs).
+DEFAULT_PROT = {
+    "enabled": True,
+    "anti_spam": True,
+    "anti_link": True,
+    "anti_arabic": False,
+    "anti_forward": False,
+    "anti_bot": True,
+    "anti_flood": True,
+    "flood_limit": 5,
+    "flood_window": 5,
+    "anti_raid": True,
+    "raid_threshold": 10,
+    "raid_window": 30,
+    "profanity_filter": False,
+    "log_channel": 0,
+    # ── Linkban (foreign invite / spam links) ─────────────────────────
+    "linkban_enabled": False,
+    "linkban_mode": "delete",       # delete | mute | warn
+    "linkban_mute_secs": 300,
+    "linkban_allow_own": True,
+    "linkban_block_urls": False,
+    "link_allowlist": [],
+    # ── NSFW filter ───────────────────────────────────────────────────
+    # Automatic NSFW filter (high-confidence stickers + photos)
+    "nsfw_enabled": True,
+    "nsfw_threshold": 90,
+    "nsfw_scan_stickers": True,
+    "nsfw_scan_photos": True,
+    "nsfw_action": "delete",
+    "nsfw_mute_secs": 300,
+    "nsfw_notify": False,
+    "nsfw_set_allowlist": [],
+    "nsfw_set_banlist": [],
+    "nsfw_id_banlist": [],
+    "nsfw_id_allowlist": [],
+}
+
+
 async def get_prot(cid):
-    p = await get_db().group_protection.find_one({"_id":cid})
+    p = await get_db().group_protection.find_one({"_id": cid})
     if not p:
-        p = {"_id":cid,"enabled":True,"anti_spam":True,"anti_link":True,
-             "anti_arabic":False,"anti_forward":False,"anti_bot":True,
-             "anti_flood":True,"flood_limit":5,"flood_window":5,
-             "anti_raid":True,"raid_threshold":10,"raid_window":30,
-             "profanity_filter":False,"log_channel":0}
-        await get_db().group_protection.insert_one(p)
-    return p
+        p = dict(DEFAULT_PROT)
+        p["_id"] = cid
+        try:
+            await get_db().group_protection.insert_one(dict(p))
+        except Exception:
+            pass
+        return p
+    # Merge defaults so legacy docs never miss new linkban fields
+    merged = dict(DEFAULT_PROT)
+    merged.update(p)
+    if merged.get("link_allowlist") is None:
+        merged["link_allowlist"] = []
+    return merged
+
 
 async def update_prot(cid, **kw):
-    await get_db().group_protection.update_one({"_id":cid},{"$set":kw},upsert=True)
+    await get_db().group_protection.update_one({"_id": cid}, {"$set": kw}, upsert=True)
+
+
+async def add_link_allow(cid, entry: str) -> bool:
+    """Add a whitelist entry (domain / @user / substring). Returns False if duplicate."""
+    from utils.linkban import normalize_allow_entry
+    e = normalize_allow_entry(entry)
+    if not e:
+        return False
+    prot = await get_prot(cid)
+    allow = list(prot.get("link_allowlist") or [])
+    if e in [normalize_allow_entry(x) for x in allow]:
+        return False
+    allow.append(e)
+    await update_prot(cid, link_allowlist=allow)
+    return True
+
+
+async def remove_link_allow(cid, entry: str) -> bool:
+    from utils.linkban import normalize_allow_entry
+    e = normalize_allow_entry(entry)
+    if not e:
+        return False
+    prot = await get_prot(cid)
+    allow = list(prot.get("link_allowlist") or [])
+    new = [x for x in allow if normalize_allow_entry(x) != e]
+    if len(new) == len(allow):
+        return False
+    await update_prot(cid, link_allowlist=new)
+    return True
+
+
+# ── NSFW cache + list helpers ────────────────────────────────────────────
+
+async def nsfw_cache_get(unique_id: str) -> dict | None:
+    doc = await get_db().nsfw_cache.find_one({"_id": unique_id})
+    if doc:
+        doc.pop("_id", None)
+        return doc
+    return None
+
+
+async def nsfw_cache_set(unique_id: str, score: int, reasons: list, is_nsfw: bool):
+    await get_db().nsfw_cache.update_one(
+        {"_id": unique_id},
+        {"$set": {"score": int(score), "reasons": list(reasons),
+                  "is_nsfw": bool(is_nsfw), "ts": now()}},
+        upsert=True,
+    )
+
+
+async def nsfw_list_add(cid, field: str, value: str):
+    prot = await get_prot(cid)
+    current = list(prot.get(field) or [])
+    if value not in current:
+        current.append(value)
+        await update_prot(cid, **{field: current})
+
+
+async def nsfw_list_remove(cid, field: str, value: str):
+    prot = await get_prot(cid)
+    current = list(prot.get(field) or [])
+    new = [v for v in current if v != value]
+    if len(new) != len(current):
+        await update_prot(cid, **{field: new})
 
 # ── Reports ───────────────────────────────────────────────────────────
 
@@ -1116,6 +1250,39 @@ async def get_reports(cid, status="pending"):
 
 async def get_report_count(cid):
     return await get_db().reports.count_documents({"chat_id":cid,"status":"pending"})
+
+# ── Moderation action log ─────────────────────────────────────────────
+
+async def log_mod_action(chat_id: int, actor_id: int, action: str, target_id: int = 0, reason: str = "", meta: dict = None):
+    try:
+        await get_db().mod_actions.insert_one({
+            "chat_id": chat_id, "actor_id": actor_id,
+            "action": action, "target_id": target_id,
+            "reason": reason or "", "meta": meta or {},
+            "created_at": now(),
+        })
+    except Exception:
+        pass
+
+async def list_mod_actions(chat_id: int, limit: int = 20):
+    try:
+        return await get_db().mod_actions.find(
+            {"chat_id": chat_id}
+        ).sort("created_at", -1).limit(limit).to_list(limit)
+    except Exception:
+        try:
+            return await get_db().mod_actions.find(
+                {"chat_id": chat_id}
+            ).sort([("created_at", -1)]).limit(limit).to_list(limit)
+        except Exception:
+            return []
+
+async def clear_mod_actions(chat_id: int) -> int:
+    try:
+        r = await get_db().mod_actions.delete_many({"chat_id": chat_id})
+        return r.deleted_count
+    except Exception:
+        return 0
 
 # ── Bad words ─────────────────────────────────────────────────────────
 
@@ -1272,6 +1439,11 @@ async def create_indexes():
         await db.businesses.create_index([("active",1),("next_salary_ts",1)])
         await db.business_offers.create_index([("target_id",1),("status",1)])
         await db.business_offers.create_index([("biz_id",1),("target_id",1)])
+    except Exception: pass
+    try:
+        await db.users.create_index([("xp", -1)])
+        await db.clans.create_index([("tag", 1)], unique=True)
+        await db.clans.create_index([("total_xp", -1)])
     except Exception: pass
     print("✅ MongoDB indexes created")
 

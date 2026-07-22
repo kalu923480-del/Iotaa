@@ -80,25 +80,34 @@ _SC = {
 #   - HTML tags:            <b>, </code>, <a href="...">, etc.
 #   - URLs:                 https://..., t.me/..., tg://...
 #   - HTML entities:        &amp; &#123; &#x1F600;
+#   - @mentions / @usernames / @tags:  @user, @Its_iotabot, @channel
 # These are captured (kept verbatim) so small-caps conversion only touches
-# the human-visible text and never breaks markup, links, or entities.
+# the human-visible text and never breaks markup, links, entities, or handles.
+# @handles: keep the whole token ASCII-normal (never smallcaps unicode).
+# Matches @username, @tag, @channel, and looser @...word forms. Stops at
+# whitespace / common punctuation so surrounding sentence text still styles.
+_AT_HANDLE = r'@[^\s@<>\[\](){}\'"`,;:!?]+'
+
 _PROTECT_RE = re.compile(
     r'(<[^>]+>'
     r'|https?://\S+'
     r'|t\.me/\S+'
     r'|tg://\S+'
+    r'|' + _AT_HANDLE +          # @username / @tag / @... — keep normal
     r'|&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);)'
 )
 
 # Tokens that must NEVER be small-caps styled — they are literal and
 # user/code-facing:
 #   - Telegram commands:  /start, /addapikey, /ludo ...
+#   - @mentions / tags:   @user, @channel, @handle (stay ASCII normal)
 #   - Versioned AI model names: gpt-4o, llama-3.1, claude-3, gemini-1.5 ...
 #   - URLs: https://..., t.me/..., tg://... (so links stay clickable)
 # (a leading ":" is excluded so https:// URLs are never touched)
 _PROTECT_OUT = re.compile(
     r"(?<!:)"
     r"(/[A-Za-z_][A-Za-z0-9_]*"
+    r"|" + _AT_HANDLE +          # @username / @tag — never smallcaps
     r"|https?://\S+"
     r"|t\.me/\S+"
     r"|tg://\S+"
@@ -126,7 +135,7 @@ def sc(text: str) -> str:
 
       - every LOWERCASE letter (a-z) -> small-caps unicode (ᴀʙᴄᴅ)
       - every UPPERCASE letter (A-Z) -> stays a normal LARGE capital (A B C)
-      - /commands and versioned model names are LEFT NORMAL on purpose
+      - /commands, @usernames/@tags, and versioned model names stay NORMAL
       - everything else (digits, punctuation, emoji, spaces, HTML, URLs,
         entities) passes through untouched.
 

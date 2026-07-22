@@ -27,13 +27,26 @@ async def _is_admin_or_owner(update, context) -> bool:
     return await is_admin(update, context)
 
 
+async def _is_admin_or_owner_resolved(update, context, chat_id: int) -> bool:
+    uid = update.effective_user.id
+    if uid == OWNER_ID:
+        return True
+    try:
+        from utils.group_session import is_user_group_admin
+        if await is_user_group_admin(context.bot, chat_id, uid):
+            return True
+    except Exception:
+        pass
+    return await is_admin(update, context)
+
+
 async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     msg = update.effective_message
-    chat = update.effective_chat
-    if chat.type == "private":
-        await msg.reply_html("🚫 <b>Filters work in groups only!</b>")
-        return
-    if not await _is_admin_or_owner(update, context):
+    if not await _is_admin_or_owner_resolved(update, context, chat_id):
         await msg.reply_html("❌ <b>Admins only!</b>")
         return
     if not context.args or len(context.args) < 2:
@@ -47,7 +60,6 @@ async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyword = context.args[0]
-    # If the command was used as a reply to media, capture the file_id
     file_id = None
     ftype = "text"
     replied = msg.reply_to_message
@@ -63,7 +75,7 @@ async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ftype = "animation"
 
     text = safe_html(" ".join(context.args[1:])) if ftype == "text" else ""
-    await save_filter(chat.id, keyword, text, file_id=file_id, ftype=ftype)
+    await save_filter(chat_id, keyword, text, file_id=file_id, ftype=ftype)
     await msg.reply_html(
         f"✅ <b>Filter saved!</b>\n\n"
         f"🔑 Keyword: <code>{safe_html(keyword)}</code>\n"
@@ -72,55 +84,54 @@ async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def filters_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    chat = update.effective_chat
-    if chat.type == "private":
-        await msg.reply_html("🚫 <b>Filters work in groups only!</b>")
-        return
-    rows = await list_filters(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=False)
+    if err:
+        await update.message.reply_html(err); return
+    rows = await list_filters(chat_id)
     if not rows:
-        await msg.reply_html(
+        await update.message.reply_html(
             "📭 <b>No filters set!</b>\n\n"
             "Add one with <code>/filter &lt;keyword&gt; &lt;reply&gt;</code>"
         )
         return
-    text = f"📋 <b>Filters in {safe_html(chat.title)} ({len(rows)})</b>\n\n"
+    text = f"📋 <b>Filters in {safe_html(title)} ({len(rows)})</b>\n\n"
     for r in rows:
         kw = r.get("keyword", "?")
         text += f"🔹 <code>{safe_html(kw)}</code> — {r.get('ftype','text')}\n"
     text += "\n💡 Delete with /stop &lt;keyword&gt;"
-    await msg.reply_html(text)
+    await update.message.reply_html(text)
 
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     msg = update.effective_message
-    chat = update.effective_chat
-    if chat.type == "private":
-        await msg.reply_html("🚫 <b>Filters work in groups only!</b>")
-        return
-    if not await _is_admin_or_owner(update, context):
+    if not await _is_admin_or_owner_resolved(update, context, chat_id):
         await msg.reply_html("❌ <b>Admins only!</b>")
         return
     if not context.args:
         await msg.reply_html("Usage: <code>/stop &lt;keyword&gt;</code>")
         return
     kw = context.args[0]
-    if await delete_filter(chat.id, kw):
+    if await delete_filter(chat_id, kw):
         await msg.reply_html(f"🗑️ <b>Filter removed:</b> <code>{safe_html(kw)}</code>")
     else:
         await msg.reply_html(f"❌ No filter named <code>{safe_html(kw)}</code>.")
 
 
 async def clearfilters_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     msg = update.effective_message
-    chat = update.effective_chat
-    if chat.type == "private":
-        await msg.reply_html("🚫 <b>Filters work in groups only!</b>")
-        return
-    if not await _is_admin_or_owner(update, context):
+    if not await _is_admin_or_owner_resolved(update, context, chat_id):
         await msg.reply_html("❌ <b>Admins only!</b>")
         return
-    n = await clear_filters(chat.id)
+    n = await clear_filters(chat_id)
     await msg.reply_html(f"🧹 <b>Removed {n} filter(s)</b> from this chat.")
 
 

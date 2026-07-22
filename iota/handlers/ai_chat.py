@@ -18,6 +18,7 @@ from utils.search import search_summary, web_search
 from utils.connect import get_partner_id
 from utils.gif_provider import get_gif_for_mood
 from utils.telegram_safe import chat_action, ACTION_TYPING
+from utils.ratelimit import ratelimit
 from config import OWNER_USERNAME, OWNER_ID, BOT_NAME, OWNER_NAME, BOT_USERNAME, BOT_AGE, BOT_FROM, BOT_DOB
 
 logger = logging.getLogger(__name__)
@@ -654,6 +655,7 @@ async def _respond(uid: int, text: str, is_premium: bool,
 
 # ── /ai command ───────────────────────────────────────────────────────────────
 
+@ratelimit("ai", limit=10, window=60)
 async def ai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user; msg = update.effective_message
     chat_obj = update.effective_chat
@@ -728,6 +730,13 @@ async def dm_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     u = update.effective_user; msg = update.effective_message
     text = (msg.text or "").strip()
     if not text or text.startswith("/"): return
+    from utils.ratelimit import ratelimit_allow
+    if not await ratelimit_allow("ai_dm", u.id, limit=15, window=60):
+        try:
+            await update.effective_message.reply_html("⏳ thoda slow... ek minute baad try kar 💕")
+        except Exception:
+            pass
+        return
     # While the user is privately composing a /whisper, their next message is
     # the whisper body — never send it to the AI model (privacy). The compose
     # handler pre-empts this one anyway, but this is a safety net.

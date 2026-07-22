@@ -12,7 +12,7 @@ from telegram import Update, ChatPermissions
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 from utils.mongo_db import get_db, ensure_user, get_user, update_user
-from utils.helpers import mention, ts, is_admin, promote_with_rights
+from utils.helpers import mention, ts, is_admin, promote_with_rights, resolve_target_chat
 from utils.fonts import sc
 
 # ── Member Tags DB ────────────────────────────────────────────────────────────
@@ -163,17 +163,15 @@ async def tag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def chathistory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle chat history for new members."""
-    chat = update.effective_chat; u = update.effective_user
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     if not args: await update.message.reply_html("Usage: /chathistory on|off"); return
     val = args[0].lower() == "on"
     try:
-        # This uses linked channel or direct group settings
-        # We store preference and inform user
         await get_db().group_settings.update_one(
-            {"_id": chat.id},
+            {"_id": chat_id},
             {"$set": {"chat_history_visible": val}},
             upsert=True
         )

@@ -573,6 +573,153 @@ async def sus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_html(f"🚨 {mention(t)} is SUS! 🛸 Red alert, crewmate! 🔴")
 
 
+# ── Extra fun actions (same pattern as kiss/hug/punch) ───────────────────────
+boop_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"👉 {mention(u)} booped {mention(t)} on the nose! 🥺",
+    ["👉 khud ko boop? cute but weird 😂", "🥺 self-boop, okay cutie"],
+    ["👉 aww boop? boop wapas! 🥺", "🥰 nose boop accepted 💕"],
+)
+ruffle_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"🖐️ {mention(u)} ruffled {mention(t)}'s hair! ✨",
+    ["🖐️ khud ke baal ruffle? stylist mode 💅", "✨ self-ruffle, okay"],
+    ["🖐️ hey mere baal! 😤 ruffle back!", "✨ hair ruffle accepted cutie"],
+)
+smooch_cmd = _make_action_cmd(
+    "kiss",
+    lambda u, t: f"💋 {mention(u)} gave {mention(t)} a big smooch! 😘",
+    ["💋 khud ko smooch? self-love fr 💕", "😘 solo smooch, okay"],
+    ["😳 smooch? sharmaa gayi 💕", "💋 smooch wapas cutie!"],
+)
+tackle_cmd = _make_action_cmd(
+    "funny",
+    lambda u, t: f"🏈 {mention(u)} tackled {mention(t)} playfully! 💥",
+    ["🏈 khud ko tackle? sports mode 😂", "💥 self-tackle, wow"],
+    ["🏈 tackle mujhe? wapas tackle! 😤", "💥 playful tackle accepted!"],
+)
+pinch_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"🤏 {mention(u)} pinched {mention(t)}'s cheek! 😊",
+    ["🤏 khud ke gaal pinch? softie 🥺", "😊 self-pinch, cute"],
+    ["🤏 ouch cheek! pinch wapas 😊", "🥰 cheek pinch accepted!"],
+)
+fistbump_cmd = _make_action_cmd(
+    "happy",
+    lambda u, t: f"👊 {mention(u)} fist-bumped {mention(t)}! 🔥",
+    ["👊 khud se fistbump? respect 🔥", "🔥 solo bump, legend"],
+    ["👊 fistbump! 🔥", "✨ bump accepted bestie!"],
+)
+bearhug_cmd = _make_action_cmd(
+    "hug",
+    lambda u, t: f"🐻 {mention(u)} gave {mention(t)} a giant bear hug! 🤗",
+    ["🐻 khud ko bear hug? cozy 🥺", "🤗 self bear hug, warm"],
+    ["🐻 bear hug? aww 🤗💕", "🥰 giant hug wapas!"],
+)
+foreheadkiss_cmd = _make_action_cmd(
+    "kiss",
+    lambda u, t: f"😚 {mention(u)} kissed {mention(t)} on the forehead! 💕",
+    ["😚 forehead kiss to self? soft 🥺", "💕 self forehead kiss"],
+    ["😳 forehead kiss? softie mode 💕", "😚 soft kiss accepted!"],
+)
+spin_cmd = _make_action_cmd(
+    "dance",
+    lambda u, t: f"🌀 {mention(u)} spun {mention(t)} around! 💫",
+    ["🌀 khud spin? dizzy vibes 😂", "💫 self-spin, okay"],
+    ["🌀 spin me? dizzy! wapas spin 💫", "✨ spin accepted!"],
+)
+dab_cmd = _make_action_cmd(
+    "dance",
+    lambda u, t: f"💪 {mention(u)} dabbed on {mention(t)}! 😎",
+    ["💪 solo dab? legend 😎", "😎 self-dab energy"],
+    ["😎 dab on me? dab back!", "💪 dab accepted!"],
+)
+flex_cmd = _make_action_cmd(
+    "happy",
+    lambda u, t: f"💪 {mention(u)} flexed on {mention(t)}! 🔥",
+    ["💪 khud pe flex? gym rat 😂", "🔥 self-flex, okay"],
+    ["💪 flex on me? main bhi flex! 🔥", "😎 flex accepted!"],
+)
+nom_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"🍪 {mention(u)} nommed {mention(t)}! 😋",
+    ["🍪 khud ko nom? hungry cutie 😋", "😋 self-nom, cute"],
+    ["🍪 nom me? nom wapas! 😋", "🥰 nom accepted!"],
+)
+squish_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"🧸 {mention(u)} squished {mention(t)}! 🥺",
+    ["🧸 khud ko squish? softie 🥺", "🥺 self-squish"],
+    ["🧸 squish? soft! squish back 🥺", "💕 squish accepted!"],
+)
+yeet_cmd = _make_action_cmd(
+    "throw",
+    lambda u, t: f"🚀 {mention(u)} YEETED {mention(t)} into the void! 💀",
+    ["🚀 khud ko yeet? legendary 💀", "💀 self-yeet moment"],
+    ["🚀 yeet me? YEET BACK 💀", "😤 wapas yeet!"],
+)
+stare_cmd = _make_action_cmd(
+    "default",
+    lambda u, t: f"👀 {mention(u)} stared intensely at {mention(t)}... 🔥",
+    ["👀 khud pe stare? mirror moment", "🔥 self-stare, deep"],
+    ["👀 stare at me? 😳 stare back!", "🔥 intense stare returned!"],
+)
+laugh_cmd = _make_action_cmd(
+    "laugh",
+    lambda u, t: f"😂 {mention(u)} laughed with {mention(t)}! 🤣",
+    ["😂 khud pe hasa? self-roast 🤣", "🤣 self-laugh, healthy"],
+    ["😂 hasa diya? hasi wapas 🤣", "🤣 laugh accepted!"],
+)
+shoulderpunch_cmd = _make_action_cmd(
+    "punch",
+    lambda u, t: f"👊 {mention(u)} gave {mention(t)} a playful shoulder punch! 💢",
+    ["👊 khud ko shoulder punch? gym 😂", "💢 self-punch vibes"],
+    ["👊 shoulder punch? wapas! 💢", "😤 playful punch back!"],
+)
+cheekpinch_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"😊 {mention(u)} pinched {mention(t)}'s cheeks! 🥰",
+    ["😊 khud ke gaal? soft 🥰", "🥰 self cheek pinch"],
+    ["😊 cheek pinch? cute! 🥰", "💕 pinch accepted!"],
+)
+headrub_cmd = _make_action_cmd(
+    "pat",
+    lambda u, t: f"🤲 {mention(u)} rubbed {mention(t)}'s head gently! 😌",
+    ["🤲 khud ke head rub? spa mode 😌", "😌 self headrub"],
+    ["🤲 head rub? softie 😌💕", "🥰 rub accepted!"],
+)
+grouphug_cmd = _make_action_cmd(
+    "hug",
+    lambda u, t: f"🫂 {mention(u)} pulled {mention(t)} into a group hug! 💞✨",
+    ["🫂 solo group hug? wholesome 💞", "✨ self group hug"],
+    ["🫂 group hug with me? yess 💞", "🤗 hug pile accepted!"],
+)
+suplex_cmd = _make_action_cmd(
+    "funny",
+    lambda u, t: f"🤼 {mention(u)} SUPLEXED {mention(t)}! 💥",
+    ["🤼 khud ko suplex? WWE 😂", "💥 self-suplex"],
+    ["🤼 suplex me? WWE MODE 💥", "😤 suplex back!"],
+)
+boopboop_cmd = _make_action_cmd(
+    "cute",
+    lambda u, t: f"👉👉 {mention(u)} double-booped {mention(t)}! 🥺💕",
+    ["👉👉 double self-boop? extra cute", "🥺 boopboop self"],
+    ["👉👉 double boop? soft 🥺", "💕 boopboop accepted!"],
+)
+cheekkiss_cmd = _make_action_cmd(
+    "kiss",
+    lambda u, t: f"😘 {mention(u)} kissed {mention(t)} on the cheek! 🌸",
+    ["😘 cheek kiss to self? soft 🌸", "🌸 self cheek kiss"],
+    ["😳 cheek kiss? shy 🌸💕", "😘 cheek kiss accepted!"],
+)
+headpat_cmd = _make_action_cmd(
+    "pat",
+    lambda u, t: f"🤚 {mention(u)} gave {mention(t)} soft headpats! 🥺✨",
+    ["🤚 self headpat? precious 🥺", "✨ solo headpat"],
+    ["🤚 headpats? more please 🥺", "💕 headpat accepted!"],
+)
+
+
 # ── Social commands ───────────────────────────────────────────────────────────
 
 async def couples_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

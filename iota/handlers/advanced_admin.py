@@ -90,9 +90,10 @@ LOCK_TYPES = {
 
 
 async def lock_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat; u = update.effective_user
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     if not context.args:
         await update.message.reply_html(
             "🔒 <b>Lock Types:</b>\n"
@@ -102,30 +103,33 @@ async def lock_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lock_type = context.args[0].lower()
     field = LOCK_TYPES.get(lock_type)
     if not field: await update.message.reply_html(f"❌ Unknown type: {lock_type}"); return
-    await _update_gs(chat.id, **{field: True})
+    await _update_gs(chat_id, **{field: True})
     await update.message.reply_html(f"🔒 <b>{lock_type}</b> locked!")
 
 
 async def unlock_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     if not context.args:
         await update.message.reply_html("Usage: /unlock &lt;type&gt;"); return
     lock_type = context.args[0].lower()
     field = LOCK_TYPES.get(lock_type)
     if not field: await update.message.reply_html(f"❌ Unknown type!"); return
-    await _update_gs(chat.id, **{field: False})
+    await _update_gs(chat_id, **{field: False})
     await update.message.reply_html(f"🔓 <b>{lock_type}</b> unlocked!")
 
 
 async def locks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    gs = await _get_group_settings(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=False)
+    if err:
+        await update.message.reply_html(err); return
+    gs = await _get_group_settings(chat_id)
     def _s(v): return "🔒" if v else "🔓"
     await update.message.reply_html(
-        f"🔐 <b>Lock Status — {safe_html(chat.title)}</b>\n\n"
+        f"🔐 <b>Lock Status — {safe_html(title)}</b>\n\n"
         f"{_s(gs['lock_messages'])} Messages\n"
         f"{_s(gs['lock_media'])} Media/Photos\n"
         f"{_s(gs['lock_stickers'])} Stickers\n"
@@ -191,41 +195,43 @@ async def _auto_del(bot, cid, mid, delay):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def setflood_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     if not args:
-        gs = await _get_group_settings(chat.id)
+        gs = await _get_group_settings(chat_id)
         status = f"Limit: {gs['flood_limit']} msgs" if gs['flood_limit'] else "OFF"
         await update.message.reply_html(
             f"🌊 Flood Control: <b>{status}</b>\n"
             f"Action: <b>{gs['flood_action']}</b>\n\n"
-            "Usage: /setflood &lt;number&gt; — Set flood limit\n"
+            "Usage: /setflood <number> — Set flood limit\n"
             "/setflood off — Disable\n"
             "/floodmode mute/ban/kick"
         ); return
     if args[0].lower() == "off":
-        await _update_gs(chat.id, flood_limit=0)
+        await _update_gs(chat_id, flood_limit=0)
         await update.message.reply_html("🌊 Flood control <b>disabled</b>!")
     else:
         try:
             limit = int(args[0])
-            await _update_gs(chat.id, flood_limit=limit)
+            await _update_gs(chat_id, flood_limit=limit)
             await update.message.reply_html(f"🌊 Flood limit set to <b>{limit} messages</b>!")
         except ValueError:
             await update.message.reply_html("❌ Use a number or 'off'!")
 
 
 async def floodmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     if not args or args[0].lower() not in ("mute","ban","kick"):
         await update.message.reply_html("Usage: /floodmode mute/ban/kick"); return
     mode = args[0].lower()
-    await _update_gs(chat.id, flood_action=mode)
+    await _update_gs(chat_id, flood_action=mode)
     await update.message.reply_html(f"🌊 Flood action set to: <b>{mode}</b>!")
 
 
@@ -281,20 +287,23 @@ async def flood_check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ═══════════════════════════════════════════════════════════════════════
 
 async def rules_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    gs = await _get_group_settings(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=False)
+    if err:
+        await update.message.reply_html(err); return
+    gs = await _get_group_settings(chat_id)
     if not gs["rules"]:
         await update.message.reply_html("📋 No rules set! Admins use /setrules"); return
     await update.message.reply_html(
-        f"📋 <b>Rules — {safe_html(chat.title)}</b>\n\n{safe_html(gs['rules'])}"
+        f"📋 <b>Rules — {safe_html(title)}</b>\n\n{safe_html(gs['rules'])}"
     )
 
 
 async def setrules_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     msg = update.effective_message
     text = ""
     if msg.reply_to_message and msg.reply_to_message.text:
@@ -302,17 +311,25 @@ async def setrules_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif context.args:
         text = " ".join(context.args)
     if not text:
-        await update.message.reply_html("Usage: /setrules &lt;rules text&gt;"); return
-    await _update_gs(chat.id, rules=text)
-    await update.message.reply_html(f"✅ Rules updated!")
+        await update.message.reply_html(
+            f"Usage: /setrules &lt;rules text&gt;\n"
+            f"(Active: <b>{safe_html(title)}</b>)"
+        ); return
+    await _update_gs(chat_id, rules=text)
+    await update.message.reply_html(
+        f"✅ Rules updated for <b>{safe_html(title)}</b>!"
+    )
 
 
 async def clearrules_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    await _update_gs(chat.id, rules="")
-    await update.message.reply_html("✅ Rules cleared!")
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    await _update_gs(chat_id, rules="")
+    await update.message.reply_html(
+        f"✅ Rules cleared for <b>{safe_html(title)}</b>!"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -320,30 +337,37 @@ async def clearrules_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def setwarnlimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    if not context.args: await update.message.reply_html("Usage: /setwarnlimit &lt;number&gt;"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    if not context.args: await update.message.reply_html("Usage: /setwarnlimit <number>"); return
     try: limit = int(context.args[0])
     except Exception as e:
         logger.debug(f"Suppressed error in advanced_admin.py: {e}")
         await update.message.reply_html("❌ Invalid number!"); return
-    await _update_gs(chat.id, warn_limit=limit)
+    await _update_gs(chat_id, warn_limit=limit)
     await update.message.reply_html(f"⚠️ Warn limit set to <b>{limit}</b>!")
 
 
 async def setwarnmode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     if not context.args or context.args[0].lower() not in ("ban","mute","kick"):
         await update.message.reply_html("Usage: /setwarnmode ban/mute/kick"); return
     mode = context.args[0].lower()
-    await _update_gs(chat.id, warn_mode=mode)
+    await _update_gs(chat_id, warn_mode=mode)
     await update.message.reply_html(f"⚠️ Warn mode set to: <b>{mode}</b>!")
 
 
 async def warnlimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    gs = await _get_group_settings(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    gs = await _get_group_settings(chat_id)
     await update.message.reply_html(
         f"⚠️ Warn limit: <b>{gs['warn_limit']}</b>\n"
         f"Mode: <b>{gs['warn_mode']}</b>"
@@ -351,14 +375,20 @@ async def warnlimit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def resetallwarns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    result = await _db().warnings.delete_many({"chat_id": chat.id})
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    result = await _db().warnings.delete_many({"chat_id": chat_id})
     await update.message.reply_html(f"✅ Cleared <b>{result.deleted_count}</b> warnings!")
 
 
 async def warnings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message; chat = update.effective_chat
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    msg = update.effective_message
     if msg.reply_to_message and msg.reply_to_message.from_user:
         tu = msg.reply_to_message.from_user
     elif context.args:
@@ -367,15 +397,15 @@ async def warnings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.debug(f"Suppressed error in advanced_admin.py: {e}")
             await msg.reply_html("❌ Invalid user!"); return
         try:
-            m = await context.bot.get_chat_member(chat.id, uid)
+            m = await context.bot.get_chat_member(chat_id, uid)
             tu = m.user
         except Exception as e:
             logger.debug(f"Suppressed error in advanced_admin.py: {e}")
             await msg.reply_html("❌ User not found!"); return
     else:
         tu = update.effective_user
-    count = await _count_user_warns(chat.id, tu.id)
-    gs = await _get_group_settings(chat.id)
+    count = await _count_user_warns(chat_id, tu.id)
+    gs = await _get_group_settings(chat_id)
     await msg.reply_html(
         f"⚠️ {mention(tu)}: <b>{count}/{gs['warn_limit']}</b> warnings"
     )
@@ -386,10 +416,13 @@ async def warnings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def save_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message; chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    msg = update.effective_message
     args = context.args
-    if not args: await msg.reply_html("Usage: /save &lt;name&gt; &lt;content&gt;\nOr reply: /save &lt;name&gt;"); return
+    if not args: await msg.reply_html("Usage: /save <name> <content>\nOr reply: /save <name>"); return
     name = args[0].lower()
     if msg.reply_to_message and msg.reply_to_message.text:
         content = msg.reply_to_message.text
@@ -397,14 +430,17 @@ async def save_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = " ".join(args[1:])
     else:
         await msg.reply_html("❌ Provide content or reply to a message!"); return
-    await _save_note(chat.id, name, content)
+    await _save_note(chat_id, name, content)
     await msg.reply_html(f"✅ Note <b>{safe_html(name)}</b> saved!")
 
 
 async def get_note_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle #notename or /get notename."""
     msg  = update.effective_message
-    chat = update.effective_chat
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=False)
+    if err:
+        return
     text = msg.text or ""
     name = None
     if text.startswith("#") and len(text) > 1:
@@ -412,16 +448,19 @@ async def get_note_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text.startswith("/get ") and len(text) > 5:
         name = text[5:].strip().lower()
     if not name: return
-    note = await _get_note(chat.id, name)
+    note = await _get_note(chat_id, name)
     if note:
         await msg.reply_html(f"📝 <b>{safe_html(name)}</b>\n\n{safe_html(note['content'])}")
 
 
 async def notes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    notes = await _list_notes(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=False)
+    if err:
+        await update.message.reply_html(err); return
+    notes = await _list_notes(chat_id)
     if not notes: await update.message.reply_html("📋 No notes saved!"); return
-    text = f"📝 <b>Notes — {safe_html(chat.title)}</b>\n\n"
+    text = f"📝 <b>Notes — {safe_html(title)}</b>\n\n"
     for n in notes:
         text += f"• #{safe_html(n['name'])}\n"
     text += "\nUse #notename to get a note"
@@ -429,11 +468,13 @@ async def notes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def clear_note_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    if not context.args: await update.message.reply_html("Usage: /clear &lt;notename&gt;"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    if not context.args: await update.message.reply_html("Usage: /clear <notename>"); return
     name = context.args[0].lower()
-    await _del_note(chat.id, name)
+    await _del_note(chat_id, name)
     await update.message.reply_html(f"✅ Note <b>{name}</b> deleted!")
 
 
@@ -442,22 +483,28 @@ async def clear_note_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def setlogchannel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     if not context.args: await update.message.reply_html("Usage: /logchannel &lt;channel_id&gt;"); return
     try: cid = int(context.args[0])
     except Exception as e:
         logger.debug(f"Suppressed error in advanced_admin.py: {e}")
         await update.message.reply_html("❌ Invalid channel ID!"); return
-    await _update_gs(chat.id, log_channel=cid)
-    await update.message.reply_html(f"✅ Log channel set to <code>{cid}</code>!")
+    await _update_gs(chat_id, log_channel=cid)
+    await update.message.reply_html(
+        f"✅ Log channel for <b>{safe_html(title)}</b> set to <code>{cid}</code>!"
+    )
 
 
 async def nolog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    await _update_gs(chat.id, log_channel=0)
-    await update.message.reply_html("✅ Log channel removed!")
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    await _update_gs(chat_id, log_channel=0)
+    await update.message.reply_html(f"✅ Log channel removed for <b>{safe_html(title)}</b>!")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -465,11 +512,13 @@ async def nolog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def cleanservice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     state = args[0].lower() == "on" if args else True
-    await _update_gs(chat.id, clean_service=state)
+    await _update_gs(chat_id, clean_service=state)
     await update.message.reply_html(
         f"🧹 Clean service messages: <b>{'ON' if state else 'OFF'}</b>"
     )
@@ -493,11 +542,13 @@ async def clean_service_handler(update: Update, context: ContextTypes.DEFAULT_TY
 # ═══════════════════════════════════════════════════════════════════════
 
 async def antichannelpin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     state = args[0].lower() == "on" if args else True
-    await _update_gs(chat.id, anti_channel_pin=state)
+    await _update_gs(chat_id, anti_channel_pin=state)
     await update.message.reply_html(
         f"📌 Anti-channel pin: <b>{'ON' if state else 'OFF'}</b>"
     )
@@ -520,32 +571,39 @@ async def channel_pin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ═══════════════════════════════════════════════════════════════════════
 
 async def disable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    if not context.args: await update.message.reply_html("Usage: /disable &lt;command&gt;"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    if not context.args: await update.message.reply_html("Usage: /disable <command>"); return
     cmd = context.args[0].lstrip("/").lower()
-    gs = await _get_group_settings(chat.id)
+    gs = await _get_group_settings(chat_id)
     disabled = gs["disabled_cmds"]
     if cmd not in disabled:
         disabled.append(cmd)
-        await _update_gs(chat.id, disabled_cmds=disabled)
+        await _update_gs(chat_id, disabled_cmds=disabled)
     await update.message.reply_html(f"🚫 Command <b>/{cmd}</b> disabled!")
 
 
 async def enable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    if not context.args: await update.message.reply_html("Usage: /enable &lt;command&gt;"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    if not context.args: await update.message.reply_html("Usage: /enable <command>"); return
     cmd = context.args[0].lstrip("/").lower()
-    gs = await _get_group_settings(chat.id)
+    gs = await _get_group_settings(chat_id)
     disabled = [d for d in gs["disabled_cmds"] if d != cmd]
-    await _update_gs(chat.id, disabled_cmds=disabled)
+    await _update_gs(chat_id, disabled_cmds=disabled)
     await update.message.reply_html(f"✅ Command <b>/{cmd}</b> enabled!")
 
 
 async def disabled_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    gs = await _get_group_settings(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    gs = await _get_group_settings(chat_id)
     if not gs["disabled_cmds"]:
         await update.message.reply_html("✅ No disabled commands!"); return
     text = "🚫 <b>Disabled Commands:</b>\n\n" + "\n".join(f"• /{c}" for c in gs["disabled_cmds"])
@@ -557,11 +615,13 @@ async def disabled_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def silentactions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     state = args[0].lower() == "on" if args else True
-    await _update_gs(chat.id, silent_actions=state)
+    await _update_gs(chat_id, silent_actions=state)
     await update.message.reply_html(
         f"🤫 Silent actions: <b>{'ON' if state else 'OFF'}</b>\n"
         f"{'(No notifications for auto-actions)' if state else '(Notifications enabled)'}"
@@ -573,11 +633,12 @@ async def silentactions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def admincache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     try:
-        # Force refresh admin list from Telegram
-        admins = await context.bot.get_chat_administrators(chat.id)
+        admins = await context.bot.get_chat_administrators(chat_id)
         await update.message.reply_html(
             f"✅ Admin cache refreshed! <b>{len(admins)}</b> admins found."
         )
@@ -590,21 +651,23 @@ async def admincache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def setgoodbye_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     if not args:
         await update.message.reply_html(
             "Usage: /setgoodbye on/off\n"
-            "Or: /setgoodbye &lt;message&gt;\n"
+            "Or: /setgoodbye <message>\n"
             "Use {name} for user name"
         ); return
     if args[0].lower() in ("on","off"):
-        await _update_gs(chat.id, goodbye_enabled=args[0].lower()=="on")
+        await _update_gs(chat_id, goodbye_enabled=args[0].lower()=="on")
         await update.message.reply_html(f"👋 Goodbye: <b>{args[0]}</b>!")
     else:
         msg_text = " ".join(args)
-        await _update_gs(chat.id, goodbye_enabled=True, goodbye_msg=msg_text)
+        await _update_gs(chat_id, goodbye_enabled=True, goodbye_msg=msg_text)
         await update.message.reply_html(f"✅ Goodbye message set!")
 
 
@@ -616,17 +679,19 @@ _captcha_pending: dict = {}  # user_id -> {chat_id, msg_id, answer}
 
 
 async def captcha_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     args = context.args
     if not args or args[0].lower() not in ("on","off"):
-        gs = await _get_group_settings(chat.id)
+        gs = await _get_group_settings(chat_id)
         await update.message.reply_html(
             f"🔐 Captcha: <b>{'ON' if gs['captcha_enabled'] else 'OFF'}</b>\n\n"
             "Usage: /captcha on/off"
         ); return
     state = args[0].lower() == "on"
-    await _update_gs(chat.id, captcha_enabled=state)
+    await _update_gs(chat_id, captcha_enabled=state)
     await update.message.reply_html(f"🔐 Captcha: <b>{'ON' if state else 'OFF'}</b>!")
 
 
@@ -785,12 +850,14 @@ async def announce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def setlang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
     if not context.args:
         await update.message.reply_html("Usage: /setlang en/hi/bn/te/mr"); return
     lang = context.args[0].lower()
-    await _update_gs(chat.id, lang=lang)
+    await _update_gs(chat_id, lang=lang)
     await update.message.reply_html(f"🌐 Language set to: <b>{lang}</b>!")
 
 
@@ -799,13 +866,16 @@ async def setlang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message; chat = update.effective_chat
-    if not await is_admin(update, context): await msg.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    msg = update.effective_message
     if not msg.reply_to_message or not msg.reply_to_message.from_user:
         await msg.reply_html("❌ Reply to someone!"); return
     tu = msg.reply_to_message.from_user
     await _db().approved.update_one(
-        {"chat_id": chat.id, "user_id": tu.id},
+        {"chat_id": chat_id, "user_id": tu.id},
         {"$set": {"approved": True}},
         upsert=True
     )
@@ -813,18 +883,24 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def unapprove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message; chat = update.effective_chat
-    if not await is_admin(update, context): await msg.reply_html("❌ Admins only!"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    msg = update.effective_message
     if not msg.reply_to_message or not msg.reply_to_message.from_user:
         await msg.reply_html("❌ Reply to someone!"); return
     tu = msg.reply_to_message.from_user
-    await _db().approved.delete_one({"chat_id": chat.id, "user_id": tu.id})
+    await _db().approved.delete_one({"chat_id": chat_id, "user_id": tu.id})
     await msg.reply_html(f"❌ {mention(tu)} <b>unapproved</b>!")
 
 
 async def approved_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    cursor = _db().approved.find({"chat_id": chat.id})
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    cursor = _db().approved.find({"chat_id": chat_id})
     docs = await cursor.to_list(50)
     if not docs: await update.message.reply_html("📋 No approved users!"); return
     text = f"✅ <b>Approved Users</b>\n\n"

@@ -198,7 +198,12 @@ def main():
         zap_cmd, dancewith_cmd,
         pat_cmd, cuddle_cmd, lick_cmd, bonk_cmd, glare_cmd, feed_cmd,
         beer_cmd, cry_cmd, blush_cmd, wave_cmd, wink_cmd, dance_cmd,
-        sleep_cmd, simp_cmd, sus_cmd
+        sleep_cmd, simp_cmd, sus_cmd,
+        boop_cmd, ruffle_cmd, smooch_cmd, tackle_cmd, pinch_cmd,
+        fistbump_cmd, bearhug_cmd, foreheadkiss_cmd, spin_cmd, dab_cmd,
+        flex_cmd, nom_cmd, squish_cmd, yeet_cmd, stare_cmd, laugh_cmd,
+        shoulderpunch_cmd, cheekpinch_cmd, headrub_cmd, grouphug_cmd,
+        suplex_cmd, boopboop_cmd, cheekkiss_cmd, headpat_cmd,
     )
     from handlers.items        import items_cmd, item_cmd, gift_cmd
     from handlers.village_war  import (
@@ -221,6 +226,9 @@ def main():
         link_cmd, del_link_cmd, chathistory_cmd,
         welcome_back_handler
     )
+    from handlers.group_panel  import (
+        mygroups_cmd, gpanel_cmd, usegroup_cmd, clearactive_cmd, group_dm_callback,
+    )
     from handlers.admin        import dot_admin_handler
     from handlers.welcome      import (
         new_member_handler, left_member_handler, setwelcome_cmd,
@@ -229,8 +237,11 @@ def main():
     from handlers.protection   import (
         protection_handler, anti_raid_handler, anti_bot_handler,
         report_cmd, reports_cmd, prot_cmd, report_callback,
-        addword_cmd, removeword_cmd, badwords_cmd
+        addword_cmd, removeword_cmd, badwords_cmd,
+        linkban_cmd, linkallow_cmd, linkdeny_cmd,
+        linkallowlist_cmd, linkcheck_cmd,
     )
+    from handlers.nsfw_filter  import nsfw_media_handler
     from handlers.advanced_admin import (
         lock_cmd, unlock_cmd, locks_cmd, lock_enforcement_handler,
         setflood_cmd, floodmode_cmd, flood_check_handler,
@@ -247,6 +258,17 @@ def main():
         captcha_new_member_handler, captcha_callback,
         setlang_cmd,
         approve_cmd, unapprove_cmd, approved_cmd
+    )
+    from handlers.group_extras import (
+        zombies_cmd, staff_cmd, joindate_cmd,
+        banlist_cmd, kickme_cmd, tmute_cmd, tban_cmd, ghostban_cmd,
+        botlist_cmd, kickbots_cmd,
+        silence_cmd, unsilence_cmd,
+        nightmode_cmd, forcesub_cmd,
+        welcomebtn_cmd, chatrank_cmd,
+        exportgconfig_cmd, importgconfig_cmd,
+        modlog_cmd,
+        group_gates_handler,
     )
     from handlers.ai_chat      import (
         ai_cmd, dm_message_handler, group_mention_handler,
@@ -267,7 +289,9 @@ def main():
         globalclose_cmd, globalopen_cmd, premiumgiveaway_cmd,
         refreshmodels_cmd, setmaxtokens_cmd, addapikey_cmd,
         removeapikey_cmd, keypoolstatus_cmd, providerstatus_cmd,
-        setpriority_cmd, toggleprovider_cmd
+        setpriority_cmd, toggleprovider_cmd,
+        addprovider_cmd, delprovider_cmd, setprovider_cmd,
+        providers_cmd, listkeys_cmd, testprovider_cmd, providerhelp_cmd,
     )
     from handlers.owner_newsys import (
         lockdown_cmd, global_unlock_cmd, slowall_cmd, lockall_cmd, unlockall_cmd,
@@ -333,7 +357,15 @@ def main():
     # ── 🆕 Net-new systems & commands (missing features) ───────────────
     from handlers.progress import (
         achievements_cmd, dailyquest_cmd, claimquest_callback,
-        stats_cmd, gleaders_cmd,
+        stats_cmd, gleaders_cmd, level_cmd, toplevel_cmd,
+    )
+    from handlers.clans import (
+        clan_cmd, clancreate_cmd, clanjoin_cmd, clanleave_cmd,
+        clankick_cmd, clandisband_cmd, clandeposit_cmd, clanbank_cmd,
+        clantop_cmd, clanmembers_cmd, clandesc_cmd, clantransfer_cmd,
+    )
+    from handlers.events import (
+        events_cmd, startevent_cmd, stopevent_cmd, eventlist_cmd,
     )
     from handlers.extras2 import (
         weather_cmd, currency_cmd, wiki_cmd, define_cmd, short_cmd,
@@ -513,6 +545,7 @@ def main():
     for c, f in [
         ("achievements", achievements_cmd), ("dailyquest", dailyquest_cmd),
         ("stats", stats_cmd), ("gleaders", gleaders_cmd),
+        ("level", level_cmd), ("toplevel", toplevel_cmd),
         ("weather", weather_cmd), ("currency", currency_cmd),
         ("wiki", wiki_cmd), ("define", define_cmd), ("short", short_cmd),
         ("time", time_cmd), ("sticky", sticky_cmd), ("feedback", feedback_cmd),
@@ -542,6 +575,24 @@ def main():
         ("grevive",grevive_cmd),("gprotect",gprotect_cmd),
         ("gcheck",gcheck_cmd),("granks",granks_cmd),
         ("weekly",weekly_cmd),("monthly",monthly_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── Clans ─────────────────────────────────────────────────────────
+    for c, f in [
+        ("clan", clan_cmd), ("clancreate", clancreate_cmd),
+        ("clanjoin", clanjoin_cmd), ("clanleave", clanleave_cmd),
+        ("clankick", clankick_cmd), ("clandisband", clandisband_cmd),
+        ("clandeposit", clandeposit_cmd), ("clanbank", clanbank_cmd),
+        ("clantop", clantop_cmd), ("clanmembers", clanmembers_cmd),
+        ("clandesc", clandesc_cmd), ("clantransfer", clantransfer_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
+    # ── Events ───────────────────────────────────────────────────────
+    for c, f in [
+        ("events", events_cmd), ("startevent", startevent_cmd),
+        ("stopevent", stopevent_cmd), ("eventlist", eventlist_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 
@@ -648,6 +699,16 @@ def main():
         ("beer",beer_cmd),("cry",cry_cmd),("blush",blush_cmd),
         ("wave",wave_cmd),("wink",wink_cmd),("dance",dance_cmd),
         ("sleep",sleep_cmd),("simp",simp_cmd),("sus",sus_cmd),
+        ("boop",boop_cmd),("ruffle",ruffle_cmd),("smooch",smooch_cmd),
+        ("tackle",tackle_cmd),("pinch",pinch_cmd),("fistbump",fistbump_cmd),
+        ("bearhug",bearhug_cmd),("foreheadkiss",foreheadkiss_cmd),
+        ("spin",spin_cmd),("dab",dab_cmd),("flex",flex_cmd),
+        ("nom",nom_cmd),("squish",squish_cmd),("yeet",yeet_cmd),
+        ("stare",stare_cmd),("laugh",laugh_cmd),
+        ("shoulderpunch",shoulderpunch_cmd),("cheekpinch",cheekpinch_cmd),
+        ("headrub",headrub_cmd),("grouphug",grouphug_cmd),
+        ("suplex",suplex_cmd),("boopboop",boopboop_cmd),
+        ("cheekkiss",cheekkiss_cmd),("headpat",headpat_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 
@@ -697,12 +758,28 @@ def main():
     ]:
         app.add_handler(CommandHandler(c, f))
 
+    # ── DM Group Management Panel ──────────────────────────────────────
+    for c, f in [
+        ("mygroups", mygroups_cmd),
+        ("gpanel",   gpanel_cmd),
+        ("usegroup", usegroup_cmd),
+        ("clearactive", clearactive_cmd),
+        ("ungroup",  clearactive_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+    app.add_handler(CallbackQueryHandler(group_dm_callback, pattern=r"^gdm_"))
+
     # ── Welcome & Protection ──────────────────────────────────────────
     for c, f in [
         ("setwelcome",setwelcome_cmd),("prot",prot_cmd),
         ("report",report_cmd),("reports",reports_cmd),
         ("addword",addword_cmd),("removeword",removeword_cmd),
         ("badwords",badwords_cmd),
+        ("linkban", linkban_cmd),
+        ("linkallow", linkallow_cmd),
+        ("linkdeny", linkdeny_cmd),
+        ("linkallowlist", linkallowlist_cmd),
+        ("linkcheck", linkcheck_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
 
@@ -774,8 +851,11 @@ def main():
         ("refreshmodels",refreshmodels_cmd),("setmaxtokens",setmaxtokens_cmd),
         ("addapikey",addapikey_cmd),("removeapikey",removeapikey_cmd),
         ("keypoolstatus",keypoolstatus_cmd),
-        ("providerstatus",providerstatus_cmd),("setpriority",setpriority_cmd),
-        ("toggleprovider",toggleprovider_cmd),
+        ("providerstatus",providerstatus_cmd),("providers",providers_cmd),
+        ("setpriority",setpriority_cmd),("toggleprovider",toggleprovider_cmd),
+        ("addprovider",addprovider_cmd),("delprovider",delprovider_cmd),
+        ("setprovider",setprovider_cmd),("listkeys",listkeys_cmd),
+        ("testprovider",testprovider_cmd),("providerhelp",providerhelp_cmd),
         ("whisper",whisper_cmd),
     ]:
         app.add_handler(CommandHandler(c, f))
@@ -827,6 +907,20 @@ def main():
     ]:
         app.add_handler(CommandHandler(c, f))
 
+    # ── Group Extras (new unique group-admin systems) ───────────────────
+    for c, f in [
+        ("zombies", zombies_cmd), ("staff", staff_cmd),
+        ("joindate", joindate_cmd), ("banlist", banlist_cmd),
+        ("kickme", kickme_cmd), ("tmute", tmute_cmd), ("tban", tban_cmd),
+        ("ghostban", ghostban_cmd), ("botlist", botlist_cmd),
+        ("kickbots", kickbots_cmd), ("silence", silence_cmd),
+        ("unsilence", unsilence_cmd), ("nightmode", nightmode_cmd),
+        ("forcesub", forcesub_cmd), ("welcomebtn", welcomebtn_cmd),
+        ("chatrank", chatrank_cmd), ("exportgconfig", exportgconfig_cmd),
+        ("importgconfig", importgconfig_cmd), ("modlog", modlog_cmd),
+    ]:
+        app.add_handler(CommandHandler(c, f))
+
     # ── Passive owner-systems enforcement (auto-reply / blackwords / bot-gate)
     from handlers.owner_newsys import (
         autoreply_handler, blackword_handler, botgate_handler,
@@ -840,6 +934,13 @@ def main():
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, autoreply_handler
     ), group=3)
+
+    # ── Group gate checks (nightmode + forcesub) — all non-command messages
+    # (text + media) so nightmode can block stickers/photos/links in captions.
+    app.add_handler(MessageHandler(
+        ~filters.COMMAND & ~filters.StatusUpdate.ALL & ~filters.UpdateType.EDITED_MESSAGE,
+        group_gates_handler,
+    ), group=4)
 
     # ── Command-usage analytics (feeds /commandstats) ───────────────────
     # Runs alongside the real command handlers; just counts invocations.
@@ -1154,6 +1255,12 @@ def main():
         protection_handler
     ), group=5)
 
+    # 3b. NSFW media filter (stickers + photos)
+    app.add_handler(MessageHandler(
+        (filters.Sticker.ALL | filters.PHOTO) & filters.ChatType.GROUPS,
+        nsfw_media_handler
+    ), group=3)
+
     # 4. Welcome back after dead
     app.add_handler(MessageHandler(
         filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND,
@@ -1330,9 +1437,16 @@ def main():
         # 🏢 Business Empire maintenance: hourly till accrual + daily salary payouts.
         from handlers.business import business_maintenance_loop
         asyncio.create_task(business_maintenance_loop(application.bot))
-        # 🏢 Business Empire maintenance: hourly till accrual + salary payouts.
-        from handlers.business import business_maintenance_loop
-        asyncio.create_task(business_maintenance_loop(application.bot))
+        # 📅 Lazy-clean expired global events periodically
+        async def _events_cleanup_job():
+            while True:
+                try:
+                    from utils.events import cleanup_expired_events
+                    await cleanup_expired_events()
+                except Exception:
+                    pass
+                await asyncio.sleep(600)
+        asyncio.create_task(_events_cleanup_job())
         # 🔁 Keep a Render/pass free Web Service awake 24/7 by self-pinging
         # its own /health route (prevents the 15-min inactivity spin-down
         # that would otherwise kill the long-poll bot too).

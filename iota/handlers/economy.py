@@ -68,19 +68,36 @@ async def daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         milestone_note = f"\n🎉 <b>{new_streak}-day streak bonus!</b> +{fmt(streak_bonus)}"
 
     total_reward = reward + streak_bonus
+    mult = 1.0
+    try:
+        from utils.events import event_multiplier
+        mult = float(await event_multiplier("daily", 1.0))
+        if mult != 1.0:
+            total_reward = int(total_reward * mult)
+    except Exception:
+        mult = 1.0
     await update_user(u.id, balance=d["balance"]+total_reward, last_daily=now,
-                      xp=d["xp"]+xp_gain, daily_kills=0, daily_robs=0,
+                      daily_kills=0, daily_robs=0,
                       last_kill_reset=now, last_rob_reset=now,
                       daily_streak=new_streak, max_streak=max_streak)
-    lv = xp_level(d["xp"]+xp_gain)
+    from utils.xp import add_xp
+    xp_result = await add_xp(u.id, xp_gain, "daily")
+    lv = xp_result.get("level") or xp_level(d.get("xp", 0) + xp_gain)
     streak_fire = "🔥" if new_streak >= 3 else "📅"
+    level_note = ""
+    if xp_result.get("leveled_up"):
+        level_note = (
+            f"\n🎉 {sc('Level Up!')} → <b>{lv}</b> "
+            f"(+{fmt(xp_result.get('reward', 0))} bonus)"
+        )
+    event_note = f"\n🎁 {sc('Event bonus')} x{mult:g}!" if mult != 1.0 else ""
     await update.message.reply_html(
         f"✅ {mention(u)} {sc('Claimed Daily Reward!')}\n"
-        f"💰 +{fmt(reward)}  |  ⚡ +{xp_gain} XP\n"
+        f"💰 +{fmt(total_reward)}  |  ⚡ +{xp_gain} XP\n"
         f"{streak_fire} {sc('Streak')}: <b>{new_streak} day{'s' if new_streak != 1 else ''}</b>"
-        f"{milestone_note}\n"
+        f"{milestone_note}{level_note}{event_note}\n"
         f"🎖️ {sc('Level')}: <b>{lv}</b>  |  🏅 {rank_title(lv)}\n"
-        f"💼 {sc('Balance')}: <b>{fmt(d['balance']+total_reward)}</b>"
+        f"💼 {sc('Balance')}: <b>{fmt(d['balance']+total_reward + int(xp_result.get('reward', 0) or 0))}</b>"
     )
 
 # ── /weekly ────────────────────────────────────────────────────────────────────
@@ -101,9 +118,17 @@ async def weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ); return
     reward = WEEKLY_PREMIUM if d.get("is_premium") else WEEKLY_NORMAL
     xp_gain = 300 if d.get("is_premium") else 150
-    await update_user(u.id, balance=d["balance"] + reward, last_weekly=now,
-                      xp=d["xp"] + xp_gain)
-    lv = xp_level(d["xp"] + xp_gain)
+    try:
+        from utils.events import event_multiplier
+        mult = await event_multiplier("weekly", 1.0)
+        if mult != 1.0:
+            reward = int(reward * mult)
+    except Exception:
+        pass
+    await update_user(u.id, balance=d["balance"] + reward, last_weekly=now)
+    from utils.xp import add_xp
+    xp_result = await add_xp(u.id, xp_gain, "weekly")
+    lv = xp_result["level"]
     await update.message.reply_html(
         f"📅 {mention(u)} {sc('Claimed Weekly Reward!')}\n"
         f"💰 +{fmt(reward)}  |  ⚡ +{xp_gain} XP\n"
@@ -130,9 +155,17 @@ async def monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ); return
     reward = MONTHLY_PREMIUM if d.get("is_premium") else MONTHLY_NORMAL
     xp_gain = 1000 if d.get("is_premium") else 500
-    await update_user(u.id, balance=d["balance"] + reward, last_monthly=now,
-                      xp=d["xp"] + xp_gain)
-    lv = xp_level(d["xp"] + xp_gain)
+    try:
+        from utils.events import event_multiplier
+        mult = await event_multiplier("monthly", 1.0)
+        if mult != 1.0:
+            reward = int(reward * mult)
+    except Exception:
+        pass
+    await update_user(u.id, balance=d["balance"] + reward, last_monthly=now)
+    from utils.xp import add_xp
+    xp_result = await add_xp(u.id, xp_gain, "monthly")
+    lv = xp_result["level"]
     await update.message.reply_html(
         f"🗓️ {mention(u)} {sc('Claimed Monthly Reward!')}\n"
         f"💰 +{fmt(reward)}  |  ⚡ +{xp_gain} XP\n"
@@ -215,10 +248,12 @@ async def auto_daily_job(bot):
                 new_streak = prev_streak + 1 if hours_since_last < 48 else 1
                 max_streak = max(u.get("max_streak", 0), new_streak)
                 await db.users.update_one({"_id": uid}, {
-                    "$inc": {"balance": reward, "xp": 100},
+                    "$inc": {"balance": reward},
                     "$set": {"last_daily": now, "daily_kills": 0, "daily_robs": 0,
                              "daily_streak": new_streak, "max_streak": max_streak}
                 })
+                from utils.xp import add_xp
+                await add_xp(uid, 100, "auto_daily")
                 try:
                     await bot.send_message(
                         uid,
@@ -246,7 +281,8 @@ async def bal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await ensure_user(u.id, u.username or "", u.full_name)
         d = await get_user(u.id); tu = u
     rank = await get_user_rank(d["_id"])
-    lv   = xp_level(d["xp"]); xp_in_lv = d["xp"] % (lv * XP_PER_LEVEL)
+    lv = d.get("level") or xp_level(d["xp"])
+    xp_in_lv = d["xp"] % (lv * XP_PER_LEVEL)
     now  = ts()
     # Status shows a simple alive / dead indicator (no protection
     # countdown), matching the requested compact format.
@@ -323,14 +359,25 @@ async def rob_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 {mention(u)} {sc('Tried To Rob')} {mention(vu)}\n"
             f"💸 {mention(vu)} {sc('Has No Money!')}"
         ); return
-    fee = int(rob_amt*tax); net = rob_amt-fee
-    xp_gain = max(1, rob_amt//1000*XP_ROB_PER_1K)
-    await update_user(vu.id, balance=victim["balance"]-rob_amt)
-    await update_user(u.id, balance=robber["balance"]+net, robs=robber["robs"]+1,
-                      daily_robs=robber.get("daily_robs",0)+1, xp=robber["xp"]+xp_gain)
+    fee = int(rob_amt * tax)
+    try:
+        from utils.events import event_multiplier
+        tax_mult = float(await event_multiplier("rob_tax", 1.0))
+        fee = int(fee * tax_mult)
+    except Exception:
+        pass
+    fee = max(0, min(fee, rob_amt))
+    net = rob_amt - fee
+    xp_gain = max(1, rob_amt // 1000 * XP_ROB_PER_1K)
+    await update_user(vu.id, balance=victim["balance"] - rob_amt)
+    await update_user(u.id, balance=robber["balance"] + net, robs=robber["robs"] + 1,
+                      daily_robs=robber.get("daily_robs", 0) + 1)
+    from utils.xp import add_xp
+    await add_xp(u.id, xp_gain, "rob")
+    tax_pct = int(round((fee / rob_amt) * 100)) if rob_amt else 0
     await msg.reply_html(
         f"👤 {mention(u)} {sc('Rᴏʙʙᴇᴅ')} {fmt(rob_amt)} {sc('Fʀᴏᴍ')} {mention(vu)}\n"
-        f"💰 {sc('Gᴀɪɴᴇᴅ')} {fmt(net)}, +{xp_gain} {sc('Xᴘ Aꜰᴛᴇʀ')} {int(tax*100)}% {sc('Dᴇᴅᴜᴄᴛɪᴏɴ')}."
+        f"💰 {sc('Gᴀɪɴᴇᴅ')} {fmt(net)}, +{xp_gain} {sc('Xᴘ Aꜰᴛᴇʀ')} {tax_pct}% {sc('Dᴇᴅᴜᴄᴛɪᴏɴ')}."
     )
 
     # 🆕 High-value theft alert: if a significant amount (5000+) was
@@ -385,7 +432,9 @@ async def kill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reward  = random.randint(*rng); xp_gain = random.randint(*xrng)
     await update_user(vu.id, dead_until=now+3600)
     await update_user(u.id, balance=killer["balance"]+reward, kills=killer["kills"]+1,
-                      daily_kills=killer.get("daily_kills",0)+1, xp=killer["xp"]+xp_gain)
+                      daily_kills=killer.get("daily_kills",0)+1)
+    from utils.xp import add_xp
+    await add_xp(u.id, xp_gain, "kill")
     await msg.reply_html(
         f"💀 <b>{sc('Kill!')}</b>\n⚔️ {mention(u)} {sc('Killed')} {mention(vu)}\n"
         f"💰 {sc('Reward')}: <b>{fmt(reward)}</b>  |  ⚡ +{xp_gain} XP\n"

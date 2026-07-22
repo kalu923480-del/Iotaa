@@ -5,6 +5,7 @@ Auto-detects and handles:
   • Spam floods (too many messages from one user)
   • Arabic/foreign script spam
   • Link spam (non-whitelisted URLs)
+  • Linkban (foreign invite links + optional all URLs, with allowlist)
   • Forwarded channel spam
   • New-account spam bots
   • Bot additions
@@ -14,23 +15,31 @@ Auto-detects and handles:
 """
 
 import re
+import asyncio
+import logging
 from collections import defaultdict
 from telegram import Update, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 from utils.mongo_db import (
     ensure_user, get_prot, update_prot, add_report, get_reports,
-    get_report_count, get_bad_words, add_bad_word, remove_bad_word
+    get_report_count, get_bad_words, add_bad_word, remove_bad_word,
+    add_link_allow, remove_link_allow, log_mod_action,
 )
-from utils.helpers import mention, ts, is_admin
+from utils.helpers import mention, ts, is_admin, resolve_target_chat
 from utils.safe_html import safe_html
+from utils.linkban import should_block_links, normalize_allow_entry, merge_linkban_settings
+
+logger = logging.getLogger(__name__)
 
 # ── Runtime flood tracking (in-memory, per-process) ───────────────────────────
 # {chat_id: {user_id: [timestamps]}}
 _flood_data: dict = defaultdict(lambda: defaultdict(list))
 _raid_data:  dict = defaultdict(list)   # {chat_id: [join_timestamps]}
 
-LINK_PATTERN   = re.compile(r'(https?://|t\.me/|@\w{5,})', re.IGNORECASE)
+# Legacy broad pattern used only when anti_link is ON and linkban is OFF
+# (keeps old behaviour: any http/t.me/@mention-like spam).
+LINK_PATTERN   = re.compile(r'(https?://|t\.me/|telegram\.me/)', re.IGNORECASE)
 ARABIC_PATTERN = re.compile(r'[\u0600-\u06FF\u0750-\u077F]{5,}')
 
 
@@ -57,6 +66,14 @@ async def _ban_user(bot, chat_id, user_id):
 async def _delete_msg(msg):
     try:
         await msg.delete()
+    except Exception:
+        pass
+
+
+async def _auto_del_msg(bot, chat_id, message_id, delay=6):
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id, message_id)
     except Exception:
         pass
 
@@ -90,6 +107,25 @@ async def protection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     text = msg.text or msg.caption or ""
+    # Also pull URLs from message entities (hidden text_link / url entities)
+    try:
+        entities = list(msg.entities or []) + list(msg.caption_entities or [])
+        for ent in entities:
+            et = getattr(ent, "type", None)
+            et_name = getattr(et, "name", str(et)).lower() if et is not None else ""
+            if "url" in et_name or et_name in ("url", "text_link"):
+                if getattr(ent, "url", None):
+                    text = f"{text} {ent.url}"
+                else:
+                    try:
+                        src = msg.text or msg.caption or ""
+                        fragment = src[ent.offset: ent.offset + ent.length]
+                        if fragment:
+                            text = f"{text} {fragment}"
+                    except Exception:
+                        pass
+    except Exception:
+        pass
     now  = ts()
 
     # ── Anti-flood ────────────────────────────────────────────────────────────
@@ -136,8 +172,70 @@ async def protection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                        f"⛔ Spam | {u.id} | {chat.title}")
             return
 
-    # ── Anti-link ─────────────────────────────────────────────────────────────
-    if prot.get("anti_link", True) and text:
+    # ── Linkban (smart invite / foreign link filter) ──────────────────────────
+    # Preferred system: blocks t.me invites / foreign group usernames with
+    # whitelist + modes. When enabled, it supersedes the coarse anti_link mute.
+    lb = merge_linkban_settings(prot)
+    if lb.get("linkban_enabled") and text:
+        own_uname = ""
+        if lb.get("linkban_allow_own", True):
+            try:
+                own_uname = (chat.username or "") if chat else ""
+            except Exception:
+                own_uname = ""
+        blocked, hits = should_block_links(
+            text,
+            enabled=True,
+            allowlist=lb.get("link_allowlist") or [],
+            own_username=own_uname,
+            allow_own=bool(lb.get("linkban_allow_own", True)),
+            block_urls=bool(lb.get("linkban_block_urls", False)),
+        )
+        if blocked:
+            await _delete_msg(msg)
+            mode = (lb.get("linkban_mode") or "delete").lower()
+            mute_secs = int(lb.get("linkban_mute_secs") or 300)
+            sample = hits[0].get("match", "link") if hits else "link"
+            try:
+                if mode == "mute":
+                    await _mute_user(context.bot, chat.id, u.id, mute_secs)
+                    await context.bot.send_message(
+                        chat.id,
+                        f"🔗 {mention(u)} — invite/link blocked! Muted "
+                        f"{mute_secs // 60}m.\n<code>{safe_html(sample[:80])}</code>",
+                        parse_mode="HTML",
+                    )
+                elif mode == "warn":
+                    await context.bot.send_message(
+                        chat.id,
+                        f"🔗 {mention(u)} — foreign links are not allowed here!\n"
+                        f"<code>{safe_html(sample[:80])}</code>",
+                        parse_mode="HTML",
+                    )
+                else:
+                    # delete-only (default) — quiet warning that auto-clears
+                    warn = await context.bot.send_message(
+                        chat.id,
+                        f"🔗 {mention(u)} — that link is not allowed.",
+                        parse_mode="HTML",
+                    )
+                    asyncio.create_task(_auto_del_msg(context.bot, chat.id, warn.message_id, 6))
+            except Exception:
+                pass
+            try:
+                await log_mod_action(
+                    chat.id, 0, "linkban", u.id,
+                    reason=sample[:120],
+                    meta={"mode": mode, "hits": len(hits)},
+                )
+            except Exception:
+                pass
+            await _log(context.bot, prot.get("log_channel", 0),
+                       f"🔗 Linkban | {u.id} | {safe_html(chat.title or '')} | {safe_html(sample[:60])}")
+            return
+
+    # ── Anti-link (legacy coarse filter — only if linkban is OFF) ─────────────
+    elif prot.get("anti_link", True) and text:
         if LINK_PATTERN.search(text):
             await _delete_msg(msg)
             await _mute_user(context.bot, chat.id, u.id, 180)
@@ -398,28 +496,40 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /prot command — protection settings ──────────────────────────────────────
 
 async def prot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat; u = update.effective_user
-    if chat.type == "private":
-        await update.message.reply_html("🚫 Use in a group!"); return
-    if not await is_admin(update, context):
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    chat = update.effective_chat
+    if chat.type != "private" and not await is_admin(update, context):
         await update.message.reply_html("❌ Admins only!"); return
+    if chat.type == "private" and not await is_admin(update, context):
+        from utils.group_session import is_user_group_admin
+        if not await is_user_group_admin(context.bot, chat_id, update.effective_user.id):
+            await update.message.reply_html("❌ Admins only!"); return
 
     args = context.args
-    prot = await get_prot(chat.id)
+    prot = await get_prot(chat_id)
 
     if not args:
         def _s(v): return "✅" if v else "❌"
+        lb_on = bool(prot.get("linkban_enabled"))
+        allow_n = len(prot.get("link_allowlist") or [])
+        nsfw_on = prot.get("nsfw_enabled") is not False  # auto ON unless hard-disabled
         await update.message.reply_html(
-            f"🛡️ <b>Protection Settings — {safe_html(chat.title)}</b>\n\n"
+            f"🛡️ <b>Protection Settings — {safe_html(title)}</b>\n\n"
             f"{_s(prot['enabled'])} Overall: <b>{'ON' if prot['enabled'] else 'OFF'}</b>\n"
             f"{_s(prot['anti_flood'])} Anti-Flood (limit: {prot['flood_limit']}/{prot['flood_window']}s)\n"
             f"{_s(prot['anti_spam'])} Anti-Spam\n"
-            f"{_s(prot['anti_link'])} Anti-Link\n"
+            f"{_s(prot['anti_link'])} Anti-Link (legacy)\n"
+            f"{_s(lb_on)} Linkban (mode: <b>{safe_html(prot.get('linkban_mode','delete'))}</b>, "
+            f"allowlist: {allow_n})\n"
             f"{_s(prot['anti_arabic'])} Anti-Arabic/Foreign\n"
             f"{_s(prot['anti_forward'])} Anti-Forward\n"
             f"{_s(prot['anti_bot'])} Anti-Bot\n"
             f"{_s(prot['anti_raid'])} Anti-Raid (threshold: {prot['raid_threshold']}/{prot['raid_window']}s)\n"
-            f"{_s(prot['profanity_filter'])} Profanity Filter\n\n"
+            f"{_s(prot['profanity_filter'])} Profanity Filter\n"
+            f"{_s(nsfw_on)} NSFW auto-filter (stickers/photos, high-confidence only)\n\n"
             "Usage:\n"
             "/prot on/off — Enable/disable all\n"
             "/prot flood on/off\n"
@@ -429,8 +539,9 @@ async def prot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/prot bot on/off\n"
             "/prot raid on/off\n"
             "/prot profanity on/off\n"
-            "/prot flood limit &lt;number&gt;\n"
-            "/prot setlog &lt;channel_id&gt;"
+            "/prot flood limit <number>\n"
+            "/prot setlog <channel_id>\n"
+            "Linkban: /linkban · /linkallow · /linkdeny · /linkallowlist"
         ); return
 
     cmd     = args[0].lower()
@@ -454,7 +565,7 @@ async def prot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cmd == "flood" and val_str == "limit" and len(args) > 2:
         try:
             limit = int(args[2])
-            await update_prot(chat.id, flood_limit=limit)
+            await update_prot(chat_id, flood_limit=limit)
             await update.message.reply_html(
                 f"✅ Flood limit set to <b>{limit} msgs/{prot['flood_window']}s</b>"
             )
@@ -463,12 +574,12 @@ async def prot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif cmd == "setlog":
         try:
             log_id = int(args[1])
-            await update_prot(chat.id, log_channel=log_id)
+            await update_prot(chat_id, log_channel=log_id)
             await update.message.reply_html(f"✅ Log channel set to <code>{log_id}</code>")
         except (ValueError, IndexError):
             await update.message.reply_html("❌ Provide channel ID: /prot setlog -1001234567890")
     elif cmd in mapping:
-        await update_prot(chat.id, **mapping[cmd])
+        await update_prot(chat_id, **mapping[cmd])
         await update.message.reply_html(
             f"✅ Protection <b>{cmd}</b> → <b>{'ON' if val else 'OFF'}</b>"
         )
@@ -476,34 +587,290 @@ async def prot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_html("❌ Unknown option. Use /prot for help.")
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  LINKBAN — foreign invite / spam link filter
+# ═══════════════════════════════════════════════════════════════════════
+
+_LINKBAN_HELP = (
+    "🔗 <b>Linkban</b> — block foreign Telegram invites &amp; spam links\n\n"
+    "<b>Commands:</b>\n"
+    "• /linkban — status\n"
+    "• /linkban on|off\n"
+    "• /linkban mode delete|mute|warn\n"
+    "• /linkban mute &lt;seconds&gt; — mute duration (mute mode)\n"
+    "• /linkban urls on|off — also block any http(s) URL\n"
+    "• /linkban own on|off — allow this group's public @username\n"
+    "• /linkallow &lt;entry&gt; — whitelist domain / @user / t.me/…\n"
+    "• /linkdeny &lt;entry&gt; — remove from whitelist\n"
+    "• /linkallowlist — show whitelist\n"
+    "• /linkcheck &lt;text&gt; — test what would be blocked\n\n"
+    "<i>Admins are never blocked. When Linkban is ON it replaces "
+    "the coarse Anti-Link mute for smarter invite filtering.</i>"
+)
+
+
+async def linkban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: configure linkban (DM-capable via active group)."""
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err)
+        return
+
+    prot = await get_prot(chat_id)
+    args = context.args or []
+
+    if not args or args[0].lower() in ("status", "help", "?"):
+        allow = prot.get("link_allowlist") or []
+        await update.message.reply_html(
+            f"🔗 <b>Linkban — {safe_html(title)}</b>\n\n"
+            f"Status: <b>{'ON ✅' if prot.get('linkban_enabled') else 'OFF ❌'}</b>\n"
+            f"Mode: <b>{safe_html(prot.get('linkban_mode', 'delete'))}</b>\n"
+            f"Mute: <b>{int(prot.get('linkban_mute_secs') or 300)}s</b>\n"
+            f"Allow own group: <b>{'yes' if prot.get('linkban_allow_own', True) else 'no'}</b>\n"
+            f"Block all URLs: <b>{'yes' if prot.get('linkban_block_urls') else 'no'}</b>\n"
+            f"Allowlist: <b>{len(allow)}</b> entr{'y' if len(allow) == 1 else 'ies'}\n\n"
+            + _LINKBAN_HELP
+        )
+        return
+
+    sub = args[0].lower()
+
+    if sub in ("on", "enable", "true", "1"):
+        await update_prot(chat_id, linkban_enabled=True)
+        await update.message.reply_html(
+            f"✅ Linkban <b>ON</b> for <b>{safe_html(title)}</b>.\n"
+            f"Foreign invites will be blocked (mode: "
+            f"<b>{safe_html(prot.get('linkban_mode', 'delete'))}</b>)."
+        )
+        return
+
+    if sub in ("off", "disable", "false", "0"):
+        await update_prot(chat_id, linkban_enabled=False)
+        await update.message.reply_html(
+            f"✅ Linkban <b>OFF</b> for <b>{safe_html(title)}</b>."
+        )
+        return
+
+    if sub == "mode":
+        if len(args) < 2:
+            await update.message.reply_html(
+                "Usage: /linkban mode <code>delete|mute|warn</code>"
+            )
+            return
+        mode = args[1].lower()
+        if mode not in ("delete", "mute", "warn"):
+            await update.message.reply_html(
+                "❌ Mode must be <code>delete</code>, <code>mute</code>, or <code>warn</code>."
+            )
+            return
+        await update_prot(chat_id, linkban_mode=mode)
+        await update.message.reply_html(
+            f"✅ Linkban mode → <b>{mode}</b>"
+        )
+        return
+
+    if sub == "mute":
+        if len(args) < 2:
+            await update.message.reply_html(
+                "Usage: /linkban mute &lt;seconds&gt; (e.g. 300)"
+            )
+            return
+        try:
+            secs = max(30, min(int(args[1]), 86400))
+        except ValueError:
+            await update.message.reply_html("❌ Seconds must be a number.")
+            return
+        await update_prot(chat_id, linkban_mute_secs=secs)
+        await update.message.reply_html(
+            f"✅ Linkban mute duration → <b>{secs}s</b> ({secs // 60}m)"
+        )
+        return
+
+    if sub == "urls":
+        val = (args[1].lower() if len(args) > 1 else "on") in ("on", "true", "1", "yes")
+        await update_prot(chat_id, linkban_block_urls=val)
+        await update.message.reply_html(
+            f"✅ Block all http(s) URLs → <b>{'ON' if val else 'OFF'}</b>"
+        )
+        return
+
+    if sub == "own":
+        val = (args[1].lower() if len(args) > 1 else "on") in ("on", "true", "1", "yes")
+        await update_prot(chat_id, linkban_allow_own=val)
+        await update.message.reply_html(
+            f"✅ Allow this group's own @username → <b>{'ON' if val else 'OFF'}</b>"
+        )
+        return
+
+    await update.message.reply_html(
+        "❌ Unknown option.\n\n" + _LINKBAN_HELP
+    )
+
+
+async def linkallow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Whitelist a domain / @username / invite fragment."""
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err)
+        return
+    if not context.args:
+        await update.message.reply_html(
+            "Usage: /linkallow &lt;domain|@user|t.me/…&gt;\n"
+            "Example: <code>/linkallow youtube.com</code>\n"
+            "         <code>/linkallow @mychannel</code>"
+        )
+        return
+    raw = " ".join(context.args)
+    ok = await add_link_allow(chat_id, raw)
+    entry = normalize_allow_entry(raw)
+    if ok:
+        await update.message.reply_html(
+            f"✅ Allowed: <code>{safe_html(entry)}</code>\n"
+            f"Group: <b>{safe_html(title)}</b>"
+        )
+    else:
+        await update.message.reply_html(
+            f"⚠️ Already allowed or invalid: <code>{safe_html(entry or raw)}</code>"
+        )
+
+
+async def linkdeny_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove a whitelist entry."""
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err)
+        return
+    if not context.args:
+        await update.message.reply_html(
+            "Usage: /linkdeny &lt;entry&gt;"
+        )
+        return
+    raw = " ".join(context.args)
+    ok = await remove_link_allow(chat_id, raw)
+    entry = normalize_allow_entry(raw)
+    if ok:
+        await update.message.reply_html(
+            f"🗑️ Removed from allowlist: <code>{safe_html(entry)}</code>"
+        )
+    else:
+        await update.message.reply_html(
+            f"❌ Not in allowlist: <code>{safe_html(entry or raw)}</code>"
+        )
+
+
+async def linkallowlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current link allowlist."""
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err)
+        return
+    prot = await get_prot(chat_id)
+    allow = prot.get("link_allowlist") or []
+    if not allow:
+        await update.message.reply_html(
+            f"📋 <b>Link allowlist — {safe_html(title)}</b>\n\n"
+            f"<i>Empty.</i> Add with /linkallow &lt;entry&gt;"
+        )
+        return
+    lines = [f"📋 <b>Link allowlist — {safe_html(title)}</b> ({len(allow)})\n"]
+    for i, e in enumerate(allow, 1):
+        lines.append(f"{i}. <code>{safe_html(str(e))}</code>")
+    await update.message.reply_html("\n".join(lines))
+
+
+async def linkcheck_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dry-run: test text against current linkban rules (no delete)."""
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err)
+        return
+    if not context.args:
+        await update.message.reply_html(
+            "Usage: /linkcheck &lt;text with links&gt;\n"
+            "Example: <code>/linkcheck join https://t.me/+AbCdEf</code>"
+        )
+        return
+    text = " ".join(context.args)
+    prot = await get_prot(chat_id)
+    lb = merge_linkban_settings(prot)
+    own = ""
+    try:
+        if update.effective_chat and update.effective_chat.type != "private":
+            own = update.effective_chat.username or ""
+        elif lb.get("linkban_allow_own"):
+            ch = await context.bot.get_chat(chat_id)
+            own = getattr(ch, "username", "") or ""
+    except Exception:
+        own = ""
+    blocked, hits = should_block_links(
+        text,
+        enabled=True,  # always evaluate for dry-run
+        allowlist=lb.get("link_allowlist") or [],
+        own_username=own,
+        allow_own=bool(lb.get("linkban_allow_own", True)),
+        block_urls=bool(lb.get("linkban_block_urls", False)),
+    )
+    if not hits and not blocked:
+        # still show extracted hits even if all allowed
+        from utils.linkban import extract_link_hits
+        all_hits = extract_link_hits(text)
+        if not all_hits:
+            await update.message.reply_html(
+                f"🔎 No links found in text.\nGroup: <b>{safe_html(title)}</b>"
+            )
+            return
+        lines = [f"🔎 <b>Linkcheck — all allowed</b> ({safe_html(title)})\n"]
+        for h in all_hits:
+            lines.append(
+                f"✅ <code>{safe_html(h.get('match', '')[:80])}</code> "
+                f"({h.get('kind')})"
+            )
+        await update.message.reply_html("\n".join(lines))
+        return
+    lines = [
+        f"🔎 <b>Linkcheck — {safe_html(title)}</b>\n"
+        f"Would block: <b>{'YES' if blocked else 'NO'}</b>\n"
+    ]
+    for h in hits:
+        lines.append(
+            f"🚫 <code>{safe_html(h.get('match', '')[:80])}</code> "
+            f"({h.get('kind')}: {safe_html(str(h.get('value', ''))[:40])})"
+        )
+    await update.message.reply_html("\n".join(lines))
+
+
 # ── /addword / /removeword / /badwords ────────────────────────────────────────
 
 async def addword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    if not context.args: await update.message.reply_html("Usage: /addword &lt;word&gt;"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    if not context.args: await update.message.reply_html("Usage: /addword <word>"); return
     word = " ".join(context.args).lower()
-    await add_bad_word(chat.id, word)
-    await update.message.reply_html(f"✅ Bad word added: <b>{word}</b>")
+    await add_bad_word(chat_id, word)
+    await update.message.reply_html(f"✅ Bad word added: <b>{safe_html(word)}</b>")
 
 
 async def removeword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    if not context.args: await update.message.reply_html("Usage: /removeword &lt;word&gt;"); return
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    if not context.args: await update.message.reply_html("Usage: /removeword <word>"); return
     word = " ".join(context.args).lower()
-    await remove_bad_word(chat.id, word)
-    await update.message.reply_html(f"✅ Removed: <b>{word}</b>")
+    await remove_bad_word(chat_id, word)
+    await update.message.reply_html(f"✅ Removed: <b>{safe_html(word)}</b>")
 
 
 async def badwords_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    if chat.type == "private": await update.message.reply_html("🚫 Group only!"); return
-    if not await is_admin(update, context): await update.message.reply_html("❌ Admins only!"); return
-    words = await get_bad_words(chat.id)
+    from utils.helpers import resolve_target_chat
+    chat_id, title, err = await resolve_target_chat(update, context, need_admin=True)
+    if err:
+        await update.message.reply_html(err); return
+    words = await get_bad_words(chat_id)
     if not words: await update.message.reply_html("📋 No bad words set!"); return
     await update.message.reply_html(
-        f"🤬 <b>Bad Words List</b>\n\n" + "\n".join(f"• {w}" for w in words)
+        f"🤬 <b>Bad Words List — {safe_html(title)}</b>\n\n"
+        + "\n".join(f"• {safe_html(w)}" for w in words)
     )
