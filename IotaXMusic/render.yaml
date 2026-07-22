@@ -1,9 +1,19 @@
-# Render blueprint — Iota Music Bot (24/7 free Web Service)
-# Docs: https://render.com/docs/blueprint-spec
+# ═══════════════════════════════════════════════════════════════════════════
+# IOTA MUSIC BOT — standalone Render Blueprint (separate account from iota)
+# ═══════════════════════════════════════════════════════════════════════════
+# Use this file with a SEPARATE Render account (not shared with economy bot).
 #
-# Use Docker so ffmpeg + deno ship correctly for YouTube playback.
-# Free web services sleep after ~15m idle — the bot self-pings /health
-# every 5 minutes so it stays awake.
+# Option A — Blueprint:
+#   Render → New → Blueprint → repo → Root Directory: IotaXMusic
+#
+# Option B — Manual Web Service (recommended for Docker):
+#   Root Directory: IotaXMusic
+#   Environment: Docker
+#   Dockerfile path: ./Dockerfile
+#   Health check: /health
+#
+# Independent of iota/ economy bot. Lower load = one bot per free instance.
+# ═══════════════════════════════════════════════════════════════════════════
 
 services:
   - type: web
@@ -12,16 +22,14 @@ services:
     plan: free
     region: oregon
     branch: main
-    rootDir: IotaXMusic
+    # When Root Directory = IotaXMusic, do NOT set rootDir.
+    # dockerfilePath is relative to that root:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.12"
       - key: PORT
         value: "8080"
-      # ── Required secrets (set real values in Render dashboard) ──
       - key: API_ID
         sync: false
       - key: API_HASH
@@ -34,15 +42,12 @@ services:
         sync: false
       - key: MONGO_DB_URI
         sync: false
-      # Log group ID (negative). 0 = disable log features
       - key: LOGGER_ID
         sync: false
-      # Raw Pastebin/Batbin URL to Netscape youtube cookies.txt
       - key: COOKIE_URL
         sync: false
       - key: BOT_USERNAME
         value: Iotamusicbot
-      # Optional
       - key: STRING2
         sync: false
       - key: SPOTIFY_CLIENT_ID

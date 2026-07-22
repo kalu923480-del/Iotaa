@@ -1,51 +1,63 @@
-# Render deploy blueprint for Iota Bot.
-# Docs: https://render.com/docs/blueprint-spec
+# ═══════════════════════════════════════════════════════════════════════════
+# IOTA ECONOMY / GAMES BOT — standalone Render Blueprint
+# ═══════════════════════════════════════════════════════════════════════════
+# Use this file with a SEPARATE Render account (not shared with music bot).
 #
-# This spins up ONE Web Service that runs both the Telegram long-poll bot
-# AND the Ludo Mini App web server (on $PORT) in a single process.
+# Option A — Blueprint (Root Directory = iota):
+#   Render → New → Blueprint → repo → set Root Directory to: iota
+#   (or open blueprint from path iota/render.yaml)
 #
-# IMPORTANT: set the secret environment variables below in the Render
-# dashboard (or via `render.yaml` env) BEFORE the first deploy. They are
-# NOT stored in this file.
+# Option B — Manual Web Service:
+#   Root Directory: iota
+#   Build: pip install -r requirements.txt
+#   Start: sh start.sh
+#   Health: /health
+#
+# This service is INDEPENDENT of IotaXMusic. Deploy music on another account.
+# ═══════════════════════════════════════════════════════════════════════════
 
 services:
   - type: web
     name: iota-bot
     runtime: python
     plan: free
-    region: oregon          # pick the region closest to you
-    branch: main            # your repo's default branch
-    rootDir: iota           # all app code + Procfile + requirements.txt live here
-    buildCommand: pip install -r requirements.txt
+    region: oregon
+    branch: main
+    # When this YAML is used with Root Directory = iota, do NOT set rootDir.
+    # When used from monorepo root Blueprint, uncomment:
+    # rootDir: iota
+    buildCommand: pip install -U pip && pip install -r requirements.txt && python3 -c "from utils.font_manager import ensure_fonts; ensure_fonts()"
     startCommand: sh start.sh
     healthCheckPath: /health
-    # ── Secrets / deploy config (set real values in the Render dashboard) ──
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
+      - key: PORT
+        value: "8080"
       - key: BOT_TOKEN
-        sync: false          # enter your Telegram bot token
+        sync: false
       - key: OWNER_ID
         sync: false
       - key: OWNER_USERNAME
         sync: false
       - key: MONGO_URI
-        sync: false          # full MongoDB Atlas connection string
+        sync: false
+      # After first deploy: https://YOUR-iota-bot.onrender.com
       - key: WEBAPP_BASE_URL
-        sync: false          # e.g. https://iota-bot.onrender.com
+        sync: false
+      - key: BOT_USERNAME
+        value: Its_iotabot
+      - key: BOT_NAME
+        value: Iota
       - key: GROQ_API_KEYS
         sync: false
       - key: SARVAM_API_KEY
         sync: false
       - key: GIPHY_API_KEY
         sync: false
-      # Optional providers (leave blank to skip):
       - key: GEMINI_API_KEYS
         sync: false
       - key: OPENROUTER_API_KEYS
         sync: false
-      - key: CLOUDFLARE_API_KEYS
+      - key: UPDATE_CHANNEL_USERNAME
         sync: false
-      - key: CLOUDFLARE_ACCOUNT_ID
-        sync: false
-      # Render auto-injects $PORT; the app uses it for the web server.
