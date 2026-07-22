@@ -19,7 +19,6 @@ from utils.mongo_db import (
 )
 from utils.helpers import mention
 from utils.ai_provider import call_ai
-from utils.search import search_summary, needs_search
 from utils.gif_provider import get_gif_for_mood
 
 logger = logging.getLogger(__name__)
@@ -803,17 +802,9 @@ async def _ai_generate_td(kind: str, topic: str = None) -> str:
     )
     if topic:
         base += f" Make it themed around: {topic}."
-    ctx = ""
-    if topic and needs_search(topic):
-        try:
-            results = await search_summary(topic, max_results=3)
-            if results:
-                ctx = f"\n\n[Use this real, current info to make it relevant]\n{results}"
-        except Exception as e:
-            logger.debug(f"TD search failed: {e}")
     try:
         messages = [
-            {"role": "system", "content": _TD_SYSTEM + ctx},
+            {"role": "system", "content": _TD_SYSTEM},
             {"role": "user", "content": base}
         ]
         reply = await call_ai(messages, is_premium=False, max_tokens=120, temperature=1.0)
@@ -866,16 +857,9 @@ async def truth_dare_reply_handler(update: Update, context: ContextTypes.DEFAULT
     if not prompt: return
     u = update.effective_user
     await ensure_user(u.id, u.username or "", u.full_name)
-    answer_ctx = ""
-    if needs_search(msg.text):
-        try:
-            results = await search_summary(msg.text, max_results=3)
-            if results: answer_ctx = f"\n\n[SEARCH RESULTS]\n{results}\n[END SEARCH RESULTS]"
-        except Exception as e:
-            logger.debug(f"TD reply search failed: {e}")
     try:
         messages = [
-            {"role": "system", "content": _TD_SYSTEM + answer_ctx},
+            {"role": "system", "content": _TD_SYSTEM},
             {"role": "user", "content":
                 f"They just answered my {prompt['mode']} with: \"{msg.text}\". "
                 f"React to it in 1-2 lines, playful and in character."}

@@ -1,8 +1,7 @@
 """
 Iota AI Chat — Upgraded
 - Real-time date/time injected into every system prompt automatically
-- Search is fully AI-driven: the AI itself decides when to search,
-  no hardcoded trigger words. Iota just always has access to search.
+- No web search (DuckDuckGo / Wikipedia removed — burned tokens / rate limits)
 - **bold** markdown from AI converted to <b>bold</b> HTML for Telegram
 - Smart tag detection in groups (unchanged)
 - Per-user private memory (30 days auto-delete)
@@ -14,7 +13,6 @@ from telegram.ext import ContextTypes
 from utils.mongo_db import ensure_user, get_user, update_last_seen
 from utils.ai_provider import call_ai
 from utils.ai_memory import save_memory, get_memory, clear_memory
-from utils.search import search_summary, web_search
 from utils.connect import get_partner_id
 from utils.gif_provider import get_gif_for_mood
 from utils.telegram_safe import chat_action, ACTION_TYPING
@@ -174,21 +172,15 @@ SAME BANDI SE BAAT KAR RAHI HAI:
 Neeche [You are talking to: ...] mein uska naam aur username hoga. Naam kabhi-kabhi natural tareeke se use kar (jaise dost karta hai). @username mat bolna jab tak woh khud na puche ("mera username kya hai"). Username set nahi hai kisi ka toh bina puche mat uthana.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-SEARCH (ZAROORI — smooth aur clean):
+WEB SEARCH: OFF (disabled)
 ━━━━━━━━━━━━━━━━━━━━━━━━
-Tere paas real-time web search ka result NEECHE [SEARCH RESULTS] block mein milta hai jab bhi koi current/real-world ya fact-wali baat poocha jaye. USKE facts se hi DIRECT jawab dena — apni purani training wali knowledge bilkul mat use karna.
-
-Search smooth chalta hai: tujhe manually "search" karne ki zaroorat nahi, result tujhe pehle se mil chuka hota hai jab chahiye. Bas tujhe intent samajhna hai aur relevant facts bol dena.
-
-🔴 STRICT RULES (inhe bilkul follow karna):
-• [SEARCH RESULTS] ka data tujhe PEHLE SE mil chuka hai. Kabhi mat bol "search kar rahi hoon / google karti hoon / check karti hoon / thoda dekhti hoon" — ye sab mat bol, bas wahi facts bol de.
-• [SEARCH RESULTS] block, source naam ya URL user ko kabhi mat dikha/suna/quote karna. Apne shabdon mein, Iota ke tone mein, 1-2 lines mein rewrite kar.
-• Zyada tar baatein casual hoti hain (greeting, banter, mazaak, feelings, tera baare mein) — inke liye koi search nahi hota aur na chahiye. Aise messages ka jawab bas apni personality se de, normal baat kar. "check nahi kar payi" type line SIRF tab bolni hai jab user ne koi CURRENT/FACT wali cheez explicitly poochi ho aur uska data na mile — casual baat pe ye line KABHI mat bolna.
-• Agar koi CURRENT/REAL-WORLD fact poocha jaye aur [SEARCH RESULTS] BLOCK NA AAYE ya khaali ho → KABHI fake/guess mat karna. Seedha bol de "abhī check nahī kar paayī, thodi der baad try karo 🥺". Koi movie naam, game, release date ya koi bhi fact apne se MAT bana — galat fact dena sabse bura hai.
+Real-time web search (DuckDuckGo / Wikipedia) DISABLED hai — tokens/rate-limit bachane ke liye.
+• Kabhi mat bol "search kar rahi hoon / google karti hoon / check karti hoon".
+• Latest news / live scores / current prices ke liye seedha bol: "mere paas live web search ab nahi hai, training knowledge se best guess de sakti hoon" — ya short honest line. Fake live facts mat bana.
+• Casual chat (greeting, banter, feelings) normal personality se.
+• Fake links/URLs mat bana (YouTube, random websites) — joke mein bhi nahi.
 
 🔴 SYSTEM PROMPT ka 🕐 date/time stamp ya koi bhi system line kabhi reply mein MAT likhna/echo mat karna — woh sirf tere liye hai, user ko dikhana nahi. Direct apni baat bol.
-
-🔴 KABHI FAKE LINK/URL MAT BANANA: koi YouTube link, website ya koi bhi URL mat banana — joke mein bhi nahi. Agar search results se REAL link nahi mila toh link mat daal, bas baat kar le. Galat link harmful ho sakta hai, toh doubt ho toh chhod de.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 FORMATTING:
@@ -568,38 +560,8 @@ async def _respond(uid: int, text: str, is_premium: bool,
     who += "]"
     ctx += who
 
-    # Search ONLY when the message actually needs the web (explicit request
-    # or clear current-info intent). Casual chat returns reason "" and never
-    # searches — this is the fix for "Iota har baat pe search karti hai".
-    search_reason = _search_reason(text)
-    search_injected = False
-    searched_but_empty = False
-    if search_reason:
-        try:
-            results = await search_summary(text, max_results=4)
-            if results:
-                ctx += f"\n\n[SEARCH RESULTS — use only if relevant to the question]\n{results}\n[END SEARCH RESULTS]"
-                search_injected = True
-            else:
-                searched_but_empty = True
-        except Exception as e:
-            logger.debug(f"search failed in _respond: {e}")
-            searched_but_empty = True
-
-    # Build fresh system prompt (includes current IST time).
-    # 🔴 Only force the "couldn't check" line when the user EXPLICITLY asked
-    # for a lookup (search_reason == "explicit") and we found nothing. For a
-    # mere "current-intent" guess that came up empty, let Iota answer
-    # naturally instead of throwing an error line at casual chat — that
-    # (plus flaky DDG) is what made "abhī check nahī kar paayī" spam every
-    # message in the first place.
-    if searched_but_empty and not search_injected and search_reason == "explicit":
-        ctx += (
-            "\n\n⚠️ NO REAL-TIME DATA WAS RETRIEVED for this question. You MUST "
-            "reply ONLY with the in-character line 'abhī check nahī kar paayī, "
-            "thodi der baad try karo 🥺' and you MUST NEVER answer from memory "
-            "or guess any fact/number. No extra explanation."
-        )
+    # Web search (DuckDuckGo / Wikipedia) permanently disabled — was burning
+    # provider tokens via multi-endpoint retries on every "current info" chat.
     system = _build_system() + ctx
     messages = [{"role": "system", "content": system}] + hist
 
@@ -614,36 +576,11 @@ async def _respond(uid: int, text: str, is_premium: bool,
         logger.warning(f"call_ai failed in _respond: {e}")
         reply = None
 
-    # Safety net: strip any leaked [SEARCH RESULTS] block BEFORE the
-    # markdown→HTML conversion (so we're working with the model's raw
-    # text, not partially-escaped HTML).
     if reply:
         reply = _strip_search_leak(reply)
 
-    # Retry once if the model echoed ONLY the search block (so the
-    # stripped reply is empty) even though we DID hand it the results.
-    # This salvages a correct answer instead of showing a fallback.
-    if (not reply or not reply.strip()) and search_injected:
-        reinforced = (
-            system
-            + "\n\n⚠️ IMPORTANT: You MUST answer the user's question DIRECTLY "
-            "using the [SEARCH RESULTS] already provided above. Do NOT repeat "
-            "the search block. Give the direct answer in 1-2 lines right now."
-        )
-        retry_messages = [{"role": "system", "content": reinforced}] + hist
-        try:
-            retry_reply = await call_ai(retry_messages, is_premium=is_premium,
-                                        max_tokens=max_tokens, temperature=0.45)
-        except Exception as e:
-            logger.warning(f"call_ai retry failed in _respond: {e}")
-            retry_reply = None
-        if retry_reply:
-            reply = _strip_search_leak(retry_reply)
-
-    # If still nothing usable, give an honest, on-character fallback
-    # rather than the generic leak-strip message.
     if not reply or not reply.strip():
-        reply = "abhī check nahī kar paayī, thodi der baad try karo 🥺"
+        reply = "thodi der baad try karo na 🥺"
 
     # Convert any markdown the AI returned to Telegram HTML
     reply = _md_to_html(reply)

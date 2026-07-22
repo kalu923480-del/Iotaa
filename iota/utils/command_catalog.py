@@ -341,7 +341,7 @@ CATALOG = {
     "chatid": ["Utility", "Show the current chat id."],
     "ocr": ["Utility", "Read text from an image."],
     "weather": ["Utility", "Get the weather for a city."],
-    "wiki": ["Utility", "Search Wikipedia."],
+    "wiki": ["Utility", "Wikipedia search (disabled)."],
     "calc": ["Utility", "Calculate a math expression."],
     "time": ["Utility", "Show the current time."],
     "currency": ["Utility", "Convert between currencies."],

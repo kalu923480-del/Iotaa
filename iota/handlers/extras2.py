@@ -98,23 +98,10 @@ async def currency_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /wiki ───────────────────────────────────────────────────────────────
 async def wiki_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_html("📚 Usage: <code>/wiki Python</code>")
-        return
-    q = " ".join(context.args)
-    data = await _get_json(
-        "https://en.wikipedia.org/api/rest_v1/page/summary/"
-        + q.replace(" ", "_")
-    )
-    if not data or "extract" not in data:
-        await update.message.reply_html(f"📚 '{sc(q)}' ke liye kuch nahi mila.")
-        return
-    extract = data["extract"]
-    if len(extract) > 800:
-        extract = extract[:800] + "…"
-    url = data.get("content_urls", {}).get("desktop", {}).get("page", "")
+    """Wikipedia lookup removed — was burning tokens / rate limits with search stack."""
     await update.message.reply_html(
-        f"📚 <b>{sc(data.get('title', q))}</b>\n\n{extract}\n\n🔗 {url}"
+        "📚 <b>Wikipedia search disabled</b> on Iota.\n"
+        "Live web/wiki lookup hata diya gaya hai (token + rate-limit save)."
     )
 
 
