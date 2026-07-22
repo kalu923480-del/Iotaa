@@ -74,6 +74,9 @@ DEFAULT_COMMANDS = [
     BotCommand("admins", "˹ ʟɪsᴛ ᴀᴅᴍɪɴs"),
     BotCommand("zombies", "˹ ʀᴇᴍᴏᴠᴇ ᴢᴏᴍʙɪᴇs"),
     BotCommand("vcinfo", "˹ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ɪɴғᴏ"),
+    BotCommand("volume", "˹ sᴇᴛ ᴠᴄ ᴠᴏʟᴜᴍᴇ"),
+    BotCommand("volup", "˹ ᴠᴏʟᴜᴍᴇ ᴜᴘ"),
+    BotCommand("voldown", "˹ ᴠᴏʟᴜᴍᴇ ᴅᴏᴡɴ"),
     BotCommand("ai", "˹ ᴀsᴋ ɪᴏᴛᴀ ᴀɪ"),
 ]
 

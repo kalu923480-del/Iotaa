@@ -88,6 +88,15 @@ TG_VIDEO_FILESIZE_LIMIT = _env_int("TG_VIDEO_FILESIZE_LIMIT", 1073741824)  # 1GB
 AUTO_LEAVING_ASSISTANT = _env_bool("AUTO_LEAVING_ASSISTANT", True)
 AUTO_LEAVE_ASSISTANT_TIME = _env_int("AUTO_LEAVE_ASSISTANT_TIME", 540)
 
+# ── Audio / volume (VC stream) ─────────────────────────────────────────────
+# PyTgCalls volume is 0–200 (100 = Telegram default)
+DEFAULT_VOLUME = max(0, min(200, _env_int("DEFAULT_VOLUME", 100)))
+MIN_VOLUME = max(0, min(200, _env_int("MIN_VOLUME", 10)))
+MAX_VOLUME = max(1, min(200, _env_int("MAX_VOLUME", 200)))
+VOLUME_STEP = max(1, min(50, _env_int("VOLUME_STEP", 10)))
+# Real-time loudness smoother (dynaudnorm) — keeps tracks level without 2-pass delay
+AUDIO_NORMALIZE = _env_bool("AUDIO_NORMALIZE", True)
+
 # ── Upstream / git ─────────────────────────────────────────────────────────
 UPSTREAM_REPO = _env("UPSTREAM_REPO", "https://github.com/Iota/IotaXMusic")
 UPSTREAM_BRANCH = _env("UPSTREAM_BRANCH", "main")

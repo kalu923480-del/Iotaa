@@ -21,12 +21,13 @@ from IotaXMedia.utils.database import (
     add_active_video_chat,
     get_lang,
     get_loop,
+    get_volume,
     group_assistant,
-    is_autoend,
     music_on,
     remove_active_chat,
     remove_active_video_chat,
     set_loop,
+    set_volume,
 )
 from IotaXMedia.utils.exceptions import AssistantErr
 from IotaXMedia.utils.formatters import check_duration, seconds_to_min, speed_converter
@@ -38,24 +39,67 @@ from IotaXMedia.utils.errors import capture_internal_err
 autoend = {}
 counter = {}
 
+# Stable stereo 48 kHz + smooth loudness (dynaudnorm = real-time)
+# PyTgCalls ffmpeg_parameters sections: default=start (before -i),
+# ---mid (after -i). Audio filters MUST be in ---mid or ffmpeg dies and VC drops.
+_AUDIO_AF = (
+    "aresample=async=1:first_pts=0:out_sample_rate=48000,"
+    "aformat=sample_fmts=s16:channel_layouts=stereo,"
+    "dynaudnorm=f=150:g=15:p=0.95"
+)
+
+
+def _merge_ffmpeg_params(extra: str | None = None) -> str | None:
+    """
+    Build PyTgCalls-compatible ffmpeg_parameters.
+    Seek flags (-ss/-to) stay in :start (before -i).
+    Audio filters go in ---mid (after -i) — required by pytgcalls parser.
+    """
+    start_bits: list[str] = []
+    mid_bits: list[str] = [f"-af {_AUDIO_AF}"] if getattr(config, "AUDIO_NORMALIZE", True) else []
+
+    if extra:
+        # Keep seek/input options in start; never put -af before -i
+        tokens = extra.strip()
+        if tokens:
+            start_bits.append(tokens)
+
+    parts: list[str] = []
+    if start_bits:
+        parts.extend(start_bits)
+    if mid_bits:
+        parts.append("---mid")
+        parts.extend(mid_bits)
+    return " ".join(parts) if parts else None
+
+
 def dynamic_media_stream(path: str, video: bool = False, ffmpeg_params: str = None) -> MediaStream:
+    params = _merge_ffmpeg_params(ffmpeg_params)
     if video:
         return MediaStream(
             media_path=path,
-            audio_parameters=AudioQuality.HIGH,
+            audio_parameters=AudioQuality.HIGH,  # 48 kHz stereo
             video_parameters=VideoQuality.HD_720p,
             audio_flags=MediaStream.Flags.REQUIRED,
             video_flags=MediaStream.Flags.REQUIRED,
-            ffmpeg_parameters=ffmpeg_params,
+            ffmpeg_parameters=params,
         )
-    else:
-        return MediaStream(
-            media_path=path,
-            audio_parameters=AudioQuality.HIGH,
-            audio_flags=MediaStream.Flags.REQUIRED,
-            video_flags=MediaStream.Flags.IGNORE,
-            ffmpeg_parameters=ffmpeg_params,
-        )
+    return MediaStream(
+        media_path=path,
+        audio_parameters=AudioQuality.HIGH,
+        audio_flags=MediaStream.Flags.REQUIRED,
+        video_flags=MediaStream.Flags.IGNORE,
+        ffmpeg_parameters=params,
+    )
+
+
+async def _apply_volume(assistant, chat_id: int) -> None:
+    """Re-apply saved volume after every play (PyTgCalls resets otherwise)."""
+    try:
+        vol = await get_volume(chat_id)
+        await assistant.change_volume_call(chat_id, int(vol))
+    except Exception:
+        pass
 
 async def _clear_(chat_id: int) -> None:
     popped = db.pop(chat_id, None)
@@ -117,6 +161,18 @@ class Call:
         await assistant.unmute(chat_id)
 
     @capture_internal_err
+    async def change_volume(self, chat_id: int, volume: int) -> int:
+        """Set VC stream volume (clamped) and persist for this chat."""
+        vol = await set_volume(chat_id, volume)
+        assistant = await group_assistant(self, chat_id)
+        try:
+            await assistant.change_volume_call(chat_id, vol)
+        except Exception:
+            # Call may not be active yet; value is still saved for next play
+            pass
+        return vol
+
+    @capture_internal_err
     async def stop_stream(self, chat_id: int) -> None:
         assistant = await group_assistant(self, chat_id)
         await _clear_(chat_id)
@@ -157,6 +213,7 @@ class Call:
         assistant = await group_assistant(self, chat_id)
         stream = dynamic_media_stream(path=link, video=bool(video))
         await assistant.play(chat_id, stream)
+        await _apply_volume(assistant, chat_id)
 
     @capture_internal_err
     async def vc_users(self, chat_id: int) -> list:
@@ -171,6 +228,7 @@ class Call:
         is_video = mode == "video"
         stream = dynamic_media_stream(path=file_path, video=is_video, ffmpeg_params=ffmpeg_params)
         await assistant.play(chat_id, stream)
+        await _apply_volume(assistant, chat_id)
 
     @capture_internal_err
     async def speedup_stream(self, chat_id: int, file_path: str, speed: float, playing: list) -> None:
@@ -185,7 +243,12 @@ class Call:
 
         if not os.path.exists(out):
             vs = str(2.0 / float(speed))
-            cmd = f'ffmpeg -i "{file_path}" -filter:v "setpts={vs}*PTS" -filter:a atempo={speed} -y "{out}"'
+            # Stable resample + atempo; avoid crackle at extreme speeds
+            cmd = (
+                f'ffmpeg -i "{file_path}" -filter:v "setpts={vs}*PTS" '
+                f'-af "atempo={speed},aresample=48000:resampler=soxr,aformat=channel_layouts=stereo" '
+                f'-y "{out}"'
+            )
             proc = await asyncio.create_subprocess_shell(
                 cmd,
                 stdin=asyncio.subprocess.PIPE,
@@ -202,6 +265,7 @@ class Call:
 
         if chat_id in db and db[chat_id] and db[chat_id][0].get("file") == file_path:
             await assistant.play(chat_id, stream)
+            await _apply_volume(assistant, chat_id)
             db[chat_id][0].update({
                 "played": con_seconds,
                 "dur": duration_min,
@@ -245,6 +309,7 @@ class Call:
 
         try:
             await assistant.play(chat_id, stream)
+            await _apply_volume(assistant, chat_id)
         except (NoActiveGroupCall, ChatAdminRequired):
             raise AssistantErr(_["call_8"])
         except NoAudioSourceFound:
@@ -263,11 +328,12 @@ class Call:
         if video:
             await add_active_video_chat(chat_id)
 
-        if await is_autoend():
-            counter[chat_id] = {}
-            users = len(await assistant.get_participants(chat_id))
-            if users == 1:
-                autoend[chat_id] = datetime.now() + timedelta(minutes=1)
+        # Do NOT schedule instant auto-end on join. Participant count is often 1
+        # (assistant only) for a few seconds before listeners appear — that was
+        # killing the VC. Auto-end is handled by the background job only when
+        # the call is truly empty for a longer period.
+        if chat_id in autoend:
+            autoend.pop(chat_id, None)
 
 
     @capture_internal_err
@@ -328,6 +394,7 @@ class Call:
                 stream = dynamic_media_stream(path=link, video=video)
                 try:
                     await client.play(chat_id, stream)
+                    await _apply_volume(client, chat_id)
                 except Exception:
                     return await app.send_message(original_chat_id, text=_["call_6"])
 
@@ -364,6 +431,7 @@ class Call:
                 stream = dynamic_media_stream(path=file_path, video=video)
                 try:
                     await client.play(chat_id, stream)
+                    await _apply_volume(client, chat_id)
                 except:
                     return await app.send_message(original_chat_id, text=_["call_6"])
 
@@ -388,6 +456,7 @@ class Call:
                 stream = dynamic_media_stream(path=videoid, video=video)
                 try:
                     await client.play(chat_id, stream)
+                    await _apply_volume(client, chat_id)
                 except:
                     return await app.send_message(original_chat_id, text=_["call_6"])
 
@@ -405,6 +474,7 @@ class Call:
                 stream = dynamic_media_stream(path=queued, video=video)
                 try:
                     await client.play(chat_id, stream)
+                    await _apply_volume(client, chat_id)
                 except:
                     return await app.send_message(original_chat_id, text=_["call_6"])
 
@@ -503,6 +573,8 @@ class Call:
     async def decorators(self) -> None:
         assistants = list(filter(None, [self.one, self.two, self.three, self.four, self.five]))
 
+        # Only hard-leave events. Do NOT use LEFT_CALL (includes BUSY/DISCARDED
+        # and can fire spuriously while joining, which killed the VC instantly).
         CRITICAL = (
             ChatUpdate.Status.KICKED
             | ChatUpdate.Status.LEFT_GROUP
@@ -510,16 +582,24 @@ class Call:
         )
 
         async def unified_update_handler(client, update: Update) -> None:
-            if isinstance(update, StreamEnded):
-                if update.stream_type == StreamEnded.Type.AUDIO:
-                    assistant = await group_assistant(self, update.chat_id)
-                    await self.play(assistant, update.chat_id)
-            
-            elif isinstance(update, ChatUpdate):
-                status = update.status
-                if (status & ChatUpdate.Status.LEFT_CALL) or (status & CRITICAL):
-                    await self.stop_stream(update.chat_id)
-                    return
+            try:
+                if isinstance(update, StreamEnded):
+                    # Only advance queue on natural audio end, and only if still active
+                    if update.stream_type == StreamEnded.Type.AUDIO:
+                        chat_id = update.chat_id
+                        if chat_id not in self.active_calls:
+                            return
+                        if not db.get(chat_id):
+                            return
+                        assistant = await group_assistant(self, chat_id)
+                        await self.play(assistant, chat_id)
+
+                elif isinstance(update, ChatUpdate):
+                    status = update.status
+                    if status & CRITICAL:
+                        await self.stop_stream(update.chat_id)
+            except Exception as e:
+                LOGGER(__name__).warning(f"update handler: {e}")
 
         for assistant in assistants:
             assistant.on_update()(unified_update_handler)

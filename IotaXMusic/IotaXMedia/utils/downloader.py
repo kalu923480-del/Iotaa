@@ -344,7 +344,8 @@ async def yt_dlp_download(link: str, type: str, title: str = "") -> Optional[str
                         None,
                         download_with_ytdlp_sync,
                         link,
-                        "bestaudio/best",
+                        # Prefer stereo ≥128kbps for stable VC quality
+                        "bestaudio[ac=2][abr>=128]/bestaudio[abr>=128]/bestaudio/best",
                     )
                 )
             )

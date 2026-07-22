@@ -39,6 +39,7 @@ playmode = {}
 playtype = {}
 skipmode = {}
 mute = {}
+volume: Dict[int, int] = {}
 
 async def get_assistant_number(chat_id: int) -> str:
     assistant = assistantdict.get(chat_id)
@@ -312,6 +313,25 @@ async def music_on(chat_id: int):
 
 async def music_off(chat_id: int):
     pause[chat_id] = False
+
+
+async def get_volume(chat_id: int) -> int:
+    """Per-chat stream volume (0–200). Defaults from config."""
+    from config import DEFAULT_VOLUME
+
+    if chat_id in volume:
+        return int(volume[chat_id])
+    return int(DEFAULT_VOLUME)
+
+
+async def set_volume(chat_id: int, vol: int) -> int:
+    """Clamp and store volume; returns applied value."""
+    from config import MIN_VOLUME, MAX_VOLUME
+
+    vol = max(int(MIN_VOLUME), min(int(MAX_VOLUME), int(vol)))
+    volume[chat_id] = vol
+    return vol
+
 
 async def is_muted(chat_id: int) -> bool:
     mode = mute.get(chat_id)

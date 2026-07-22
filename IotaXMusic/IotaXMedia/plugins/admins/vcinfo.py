@@ -5,7 +5,7 @@ from pyrogram.types import Message
 from config import BANNED_USERS
 from IotaXMedia import app
 from IotaXMedia.core.call import StreamController
-from IotaXMedia.utils.database import group_assistant
+from IotaXMedia.utils.database import get_volume, group_assistant
 from IotaXMedia.utils.admin_filters import admin_filter
 
 
@@ -19,7 +19,11 @@ async def vc_info(client, message: Message):
         if not participants:
             return await message.reply_text("❌ No users found in the voice chat.")
 
-        msg_lines = ["🎧 <b>VC Members Info:</b>\n"]
+        bot_vol = await get_volume(chat_id)
+        msg_lines = [
+            "🎧 <b>VC Members Info:</b>\n",
+            f"🔊 <b>Bot stream volume:</b> <code>{bot_vol}%</code>\n",
+        ]
         for p in participants:
             try:
                 user = await app.get_users(p.user_id)
@@ -27,11 +31,10 @@ async def vc_info(client, message: Message):
             except Exception:
                 name = f"<code>{p.user_id}</code>"
 
-            mute_status = "🔇" if p.muted else "👤"
+            mute_status = "🔇" if getattr(p, "muted", False) or getattr(p, "is_muted", False) else "👤"
             screen_status = "🖥️" if getattr(p, "screen_sharing", False) else ""
-            volume_level = getattr(p, "volume", "N/A")
 
-            info = f"{mute_status} {name} | 🎚️ {volume_level}"
+            info = f"{mute_status} {name}"
             if screen_status:
                 info += f" | {screen_status}"
             msg_lines.append(info)

@@ -5,6 +5,7 @@ from pyrogram import filters
 from pyrogram.types import CallbackQuery, InlineKeyboardMarkup
 from config import (
     BANNED_USERS,
+    VOLUME_STEP,
     lyrical,
     SOUNCLOUD_IMG_URL,
     STREAM_IMG_URL,
@@ -20,6 +21,7 @@ from IotaXMedia.utils.database import (
     get_active_chats,
     get_assistant,
     get_lang,
+    get_volume,
     is_active_chat,
     is_music_playing,
     music_off,
@@ -116,6 +118,22 @@ async def manage_callback(client, callback: CallbackQuery, _):
 
     elif command in ["Skip", "Replay"]:
         await handle_skip_replay(callback, _, chat_id, command, user_mention)
+
+    elif command == "VolUp":
+        current = await get_volume(chat_id)
+        vol = await StreamController.change_volume(chat_id, current + VOLUME_STEP)
+        await callback.answer(f"Volume {vol}%", show_alert=False)
+
+    elif command == "VolDown":
+        current = await get_volume(chat_id)
+        vol = await StreamController.change_volume(chat_id, current - VOLUME_STEP)
+        await callback.answer(f"Volume {vol}%", show_alert=False)
+
+    elif command == "VolShow":
+        vol = await get_volume(chat_id)
+        filled = max(0, min(10, round(vol / 20)))
+        bar = "█" * filled + "░" * (10 - filled)
+        await callback.answer(f"{vol}%  {bar}", show_alert=True)
 
     else:
         await handle_seek(callback, _, chat_id, command, user_mention)
