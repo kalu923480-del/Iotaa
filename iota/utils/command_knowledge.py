@@ -128,10 +128,30 @@ COMMAND_GROUPS = {
 
 
 def build_help_text() -> str:
-    """Plain-text summary used by the AI's system prompt (compact, no HTML)."""
+    """Full plain-text summary (e.g. /help). Prefer build_help_text_compact for AI."""
     lines = []
     for category, cmds in COMMAND_GROUPS.items():
         lines.append(category)
         for c in cmds:
             lines.append(f"  {c}")
+    return "\n".join(lines)
+
+
+def build_help_text_compact() -> str:
+    """
+    Token-cheap feature blurb for the AI system prompt.
+    Full command dump was ~2–4k tokens per turn and burned free-tier limits
+    in 3–4 messages.
+    """
+    lines = [
+        "Main features users can ask about (short answers only):",
+        "• Economy: /daily /bal /rob /kill /protect /give /shop /slots /lottery",
+        "• Bank: /bank /deposit /withdraw /transfer /loan /bazaar",
+        "• Games: /ludo /werewolf /bluff /tictactoe /rps /quiz /roulette /wheel",
+        "• Fun: /slap /kiss /hug /truth /dare /meme",
+        "• Social: /valentine /last_seen /connect",
+        "• Village: village war cmds if they ask",
+        "• Group admin (if they are admin): /setwelcome /setrules /prot /lock /warn",
+        "Owner/admin internal tools: you do NOT know them — say you don't know.",
+    ]
     return "\n".join(lines)

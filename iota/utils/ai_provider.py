@@ -26,6 +26,7 @@ import aiohttp
 from utils.chat_compiler import (
     compile_messages, to_gemini_format,
     normalize_openai_response, normalize_gemini_response,
+    DEFAULT_MAX_HISTORY,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,9 +42,13 @@ except ImportError:
     CLOUDFLARE_ACCOUNT_ID = ""
 
 _DEFAULT_COOLDOWN_SECONDS = 60
-_DEFAULT_MAX_TOKENS = 1024
+# Chat uses ~100–150; keep default modest so misconfigured callers don't
+# request huge completions.
+_DEFAULT_MAX_TOKENS = 256
 _REQUEST_TIMEOUT_SECONDS = 25
 _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+# Don't burn every provider on one user message (each attempt = TPM hit).
+_MAX_PROVIDER_ATTEMPTS = 2
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -561,51 +566,69 @@ async def _call_openai_compat_once(p: _Provider, key_obj: _KeyHealth, messages: 
     headers.update(p.extra_headers or {})
     base = (p.base_url or "").rstrip("/")
     url = f"{base}/chat/completions"
-    # Prefer max_tokens (widest OpenAI-compat support). If the provider
-    # rejects it, retry once with max_completion_tokens (newer OpenAI/Groq).
-    payloads = [
-        {"model": model, "messages": messages, "max_tokens": max_tokens,
-         "temperature": temperature},
-        {"model": model, "messages": messages, "max_completion_tokens": max_tokens,
-         "temperature": temperature},
-    ]
+    # Single request with max_tokens (widest support). Do NOT double-fire
+    # max_completion_tokens on every 400 — that doubled token/rate usage.
+    # Only retry alternate field when body clearly complains about max_tokens.
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
     key_obj.total_requests += 1
     key_obj.last_used_ts = time.time()
     try:
         async with aiohttp.ClientSession() as s:
-            last_body = ""
-            last_status = 0
-            for i, payload in enumerate(payloads):
-                async with s.post(url, json=payload, headers=headers,
-                                   timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SECONDS)) as r:
-                    last_status = r.status
-                    if r.status == 200:
-                        data = await r.json()
-                        result = normalize_openai_response(data)
-                        if result:
-                            key_obj.successful_requests += 1
-                            return result
-                        key_obj.failed_requests += 1
-                        key_obj.last_error = "empty/unrecognized response shape"
-                        return None
-                    last_body = await r.text()
-                    # Retry with alternate token field only on 400-style param errors
-                    if i == 0 and r.status == 400 and (
-                        "max_tokens" in last_body.lower()
-                        or "max_completion" in last_body.lower()
-                    ):
-                        continue
-                    break
+            async with s.post(
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SECONDS),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    result = normalize_openai_response(data)
+                    if result:
+                        key_obj.successful_requests += 1
+                        return result
+                    key_obj.failed_requests += 1
+                    key_obj.last_error = "empty/unrecognized response shape"
+                    return None
 
-            key_obj.failed_requests += 1
-            key_obj.last_error = f"HTTP {last_status}: {last_body[:150]}"
-            if last_status in _RETRYABLE_STATUSES:
-                key_obj.status = "cooling_down"
-                key_obj.cooldown_until = time.time() + _cooldown_seconds
-                logger.info(f"[{p.name}] key {key_obj.masked()} -> HTTP {last_status}, cooling down")
-            else:
-                logger.warning(f"[{p.name}] key {key_obj.masked()} -> non-retryable HTTP {last_status}")
-            return None
+                last_body = await r.text()
+                last_status = r.status
+
+                if last_status == 400 and "max_tokens" in last_body.lower():
+                    alt = {
+                        "model": model,
+                        "messages": messages,
+                        "max_completion_tokens": max_tokens,
+                        "temperature": temperature,
+                    }
+                    async with s.post(
+                        url, json=alt, headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SECONDS),
+                    ) as r2:
+                        if r2.status == 200:
+                            data = await r2.json()
+                            result = normalize_openai_response(data)
+                            if result:
+                                key_obj.successful_requests += 1
+                                return result
+                        last_body = await r2.text()
+                        last_status = r2.status
+
+                key_obj.failed_requests += 1
+                key_obj.last_error = f"HTTP {last_status}: {last_body[:150]}"
+                if last_status in _RETRYABLE_STATUSES:
+                    key_obj.status = "cooling_down"
+                    key_obj.cooldown_until = time.time() + _cooldown_seconds
+                    logger.info(
+                        f"[{p.name}] key {key_obj.masked()} -> HTTP {last_status}, cooling down"
+                    )
+                else:
+                    logger.warning(
+                        f"[{p.name}] key {key_obj.masked()} -> non-retryable HTTP {last_status}"
+                    )
+                return None
     except asyncio.TimeoutError:
         key_obj.failed_requests += 1
         key_obj.last_error = "timeout"
@@ -672,8 +695,11 @@ async def _call_provider(p: _Provider, messages: list, model: str,
         logger.warning(f"[{p.name}] not configured (missing base URL) — skipping")
         return None
 
+    # At most 2 keys per provider per user message — avoid rotating through
+    # an entire key pool (each attempt burns TPM).
     tried = set()
-    for _ in range(len(p.keys)):
+    max_keys = min(2, len(p.keys))
+    for _ in range(max_keys):
         key_obj = p.pick_key()
         if not key_obj or key_obj.key in tried:
             break
@@ -688,11 +714,15 @@ async def _call_provider(p: _Provider, messages: list, model: str,
 
 
 async def call_ai(messages: list, is_premium: bool = False,
-                   max_tokens: int | None = None, temperature: float = 0.9) -> str:
+                   max_tokens: int | None = None, temperature: float = 0.9,
+                   max_history: int | None = None) -> str:
     if max_tokens is None:
         max_tokens = _max_tokens_default
+    # Hard cap completion size for free-tier safety
+    max_tokens = max(32, min(int(max_tokens), 512))
 
-    messages = compile_messages(messages)
+    hist = max_history if max_history is not None else DEFAULT_MAX_HISTORY
+    messages = compile_messages(messages, max_history=hist)
 
     ordered = _ordered_providers()
     if not ordered:
@@ -703,8 +733,12 @@ async def call_ai(messages: list, is_premium: bool = False,
         )
 
     attempted_providers = []
-    for p in ordered:
+    # Cap how many providers we hammer per user message (TPM saver).
+    for p in ordered[:_MAX_PROVIDER_ATTEMPTS]:
         model = p.premium_model if is_premium else p.free_model
+        if not model:
+            attempted_providers.append(p.name)
+            continue
         result = await _call_provider(p, messages, model, max_tokens, temperature)
         if result:
             return result

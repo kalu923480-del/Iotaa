@@ -23,30 +23,56 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_HISTORY = 20  # messages, not counting the system prompt
+# Chat turns only (not counting system). Keep low — free tiers die on long context.
+DEFAULT_MAX_HISTORY = 8
+MAX_MSG_CHARS = 500
+MAX_SYSTEM_CHARS = 4500
+
+
+def _clip_msg(m: dict, max_chars: int = MAX_MSG_CHARS) -> dict:
+    c = m.get("content")
+    if not isinstance(c, str) or len(c) <= max_chars:
+        return m
+    out = dict(m)
+    out["content"] = c[: max_chars - 1] + "…"
+    return out
 
 
 def compile_messages(messages: list, max_history: int = DEFAULT_MAX_HISTORY) -> list:
     """
     Cleans up a raw {"role","content"} message list before sending it
     anywhere: keeps the system prompt (if present) untouched, drops
-    consecutive exact-duplicate messages, and trims from the oldest
-    non-system messages if the list is too long.
+    consecutive exact-duplicate messages, trims long bodies, and trims
+    from the oldest non-system messages if the list is too long.
     """
     if not messages:
         return messages
 
-    system_msgs = [m for m in messages if m.get("role") == "system"]
+    system_msgs = []
+    for m in messages:
+        if m.get("role") != "system":
+            continue
+        sm = dict(m)
+        c = sm.get("content") or ""
+        if isinstance(c, str) and len(c) > MAX_SYSTEM_CHARS:
+            sm["content"] = c[: MAX_SYSTEM_CHARS - 20] + "\n…[truncated]"
+        system_msgs.append(sm)
+
     convo_msgs = [m for m in messages if m.get("role") != "system"]
 
     # Drop consecutive duplicates (same role + same content back to back)
     deduped = []
     for m in convo_msgs:
-        if deduped and deduped[-1].get("role") == m.get("role") and deduped[-1].get("content") == m.get("content"):
+        if (
+            deduped
+            and deduped[-1].get("role") == m.get("role")
+            and deduped[-1].get("content") == m.get("content")
+        ):
             continue
-        deduped.append(m)
+        deduped.append(_clip_msg(m))
 
     # Trim oldest first if over the limit
+    max_history = max(2, min(int(max_history or DEFAULT_MAX_HISTORY), 16))
     if len(deduped) > max_history:
         deduped = deduped[-max_history:]
 

@@ -807,7 +807,7 @@ async def _ai_generate_td(kind: str, topic: str = None) -> str:
             {"role": "system", "content": _TD_SYSTEM},
             {"role": "user", "content": base}
         ]
-        reply = await call_ai(messages, is_premium=False, max_tokens=120, temperature=1.0)
+        reply = await call_ai(messages, is_premium=False, max_tokens=80, temperature=1.0, max_history=4)
         return reply.strip().strip('"') if reply else None
     except Exception as e:
         logger.debug(f"AI TD failed: {e}")
@@ -864,7 +864,7 @@ async def truth_dare_reply_handler(update: Update, context: ContextTypes.DEFAULT
                 f"They just answered my {prompt['mode']} with: \"{msg.text}\". "
                 f"React to it in 1-2 lines, playful and in character."}
         ]
-        reply = await call_ai(messages, is_premium=False, max_tokens=100, temperature=0.95)
+        reply = await call_ai(messages, is_premium=False, max_tokens=80, temperature=0.95, max_history=4)
         if reply: await msg.reply_html(reply.strip())
     except Exception as e:
         logger.debug(f"TD reply AI failed: {e}")
