@@ -94,8 +94,8 @@ UPSTREAM_BRANCH = _env("UPSTREAM_BRANCH", "main")
 GIT_TOKEN = _env("GIT_TOKEN")
 
 # ── Support links / assets ─────────────────────────────────────────────────
-SUPPORT_CHAT = _env("SUPPORT_CHAT", "https://t.me/IotaDiscussion")
-SUPPORT_CHANNEL = _env("SUPPORT_CHANNEL", "https://t.me/Iota")
+SUPPORT_CHAT = _env("SUPPORT_CHAT", "https://t.me/samvadacha_chat")
+SUPPORT_CHANNEL = _env("SUPPORT_CHANNEL", "https://t.me/IotaUpdates")
 
 # Local branded assets (never use random YouTube/telegra placeholders)
 from pathlib import Path as _Path

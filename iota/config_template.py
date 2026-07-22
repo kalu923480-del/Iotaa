@@ -59,7 +59,7 @@ BOT_FROM       = _env("BOT_FROM", "Delhi, India")
 BOT_DOB        = _env("BOT_DOB", "9 March 2009")
 
 # ── Update channel (leave blank to hide the button) ──────────────────────
-UPDATE_CHANNEL_USERNAME = _env("UPDATE_CHANNEL_USERNAME", "")
+UPDATE_CHANNEL_USERNAME = _env("UPDATE_CHANNEL_USERNAME", "IotaUpdates")
 
 # ── Ludo Mini App ─────────────────────────────────────────────────────────
 # On Render, WEBAPP_BASE_URL should be your live Render URL, e.g.
@@ -441,12 +441,17 @@ BUSINESS_GUARD_PROTECT   = 0.05          # each Security Guard cuts the take by 
 BUSINESS_ROB_COOLDOWN    = 6 * 3600      # 6h between business robberies (per robber)
 BUSINESS_ROB_MIN_TILL    = 5_000         # till must hold at least this to be worth robbing
 
+# ── Game Economy (PvP rules) ────────────────────────────────────────────────
+GAME_MIN_BET     = 250
+GAME_MAX_BET     = 100_000
+GAME_FEE_PERCENT = 5
+
 # ── Card ──────────────────────────────────────────────────────────────────
-CARD_FEE_PERCENT = 5
+CARD_FEE_PERCENT = GAME_FEE_PERCENT
 CARD_XP_WIN      = 250
 CARD_XP_LOSS     = 50
-CARD_MIN_BET     = 10
-CARD_MAX_BET     = 100_000
+CARD_MIN_BET     = GAME_MIN_BET
+CARD_MAX_BET     = GAME_MAX_BET
 CARD_LOBBY_TIMEOUT_SECONDS = 90
 
 # ── Items ─────────────────────────────────────────────────────────────────

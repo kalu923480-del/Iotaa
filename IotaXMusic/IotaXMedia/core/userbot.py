@@ -9,11 +9,8 @@ assistants = []
 assistantids = []
 
 GROUPS_TO_JOIN = [
-    "IotaDiscussion",
-    "Iota",
-    "IotaCodes",
-    "IotaDevs",
-    "IotaNetwork",
+    "IotaUpdates",
+    "samvadacha_chat",
 ]
 
 

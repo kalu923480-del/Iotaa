@@ -5,7 +5,7 @@ import random
 import requests
 from IotaXMedia import app
 
-SUPPORT_CHAT = "IotaUpdates"
+SUPPORT_CHAT = "samvadacha_chat"
 SUPPORT_BTN = InlineKeyboardMarkup(
     [[InlineKeyboardButton("ꜱᴜᴘᴘᴏʀᴛ", url=f"https://t.me/{SUPPORT_CHAT}")]]
 )
