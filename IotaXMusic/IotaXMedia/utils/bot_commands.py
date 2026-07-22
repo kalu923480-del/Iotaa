@@ -102,6 +102,14 @@ OWNER_COMMANDS = [
     BotCommand("botschk", "ᴄʜᴇᴄᴋ ʙᴏᴛs sᴛᴀᴛᴜs"),
     BotCommand("backup", "ʙᴀᴄᴋᴜᴩ ᴛʜᴇ ᴅᴀᴛᴀʙᴀsᴇ"),
     BotCommand("deleteall", "ᴅᴇʟᴇᴛᴇ ᴀʟʟ ᴍsɢs (ᴏᴡɴᴇʀ)"),
+    BotCommand("addwelcome", "ᴜᴘʟᴏᴀᴅ ᴡᴇʟᴄᴏᴍᴇ ʙɢ (ᴏᴡɴᴇʀ)"),
+    BotCommand("listwelcome", "ʟɪsᴛ ᴡᴇʟᴄᴏᴍᴇ ʙɢs (ᴏᴡɴᴇʀ)"),
+    BotCommand("welcomepack", "ᴡᴇʟᴄᴏᴍᴇ ᴘᴀᴄᴋ sᴛᴀᴛs (ᴏᴡɴᴇʀ)"),
+    BotCommand("delwelcome", "ᴅᴇʟᴇᴛᴇ ᴡᴇʟᴄᴏᴍᴇ ʙɢ (ᴏᴡɴᴇʀ)"),
+    BotCommand("setwelcome", "sᴇᴛ ᴅᴇғᴀᴜʟᴛ ᴡᴇʟᴄᴏᴍᴇ (ᴏᴡɴᴇʀ)"),
+    BotCommand("setupic", "sᴇᴛ ᴜᴘɪᴄ.ᴘɴɢ (ᴏᴡɴᴇʀ)"),
+    BotCommand("settiny", "sᴇᴛ ᴛɪɴʏ.ᴘɴɢ (ᴏᴡɴᴇʀ)"),
+    BotCommand("setcouple", "sᴇᴛ ᴄᴏᴜᴘʟᴇ.ᴘɴɢ (ᴏᴡɴᴇʀ)"),
 ]
 
 
