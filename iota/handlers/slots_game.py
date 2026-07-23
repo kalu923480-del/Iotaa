@@ -44,6 +44,7 @@ from utils.safe_html import safe_html
 from utils.system_gate import games_gate
 from utils.game_ui import send_gif_result
 from utils.game_art import send_game_art as _send_art, render_slots as _render_slots
+from utils.game_rules import bot_game_disabled_msg, PVP_GAMES_HINT
 
 logger = logging.getLogger(__name__)
 
@@ -74,66 +75,6 @@ def _payout_multiplier(reels: tuple[str, str, str]) -> float:
 
 @games_gate
 async def slots_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    msg = update.effective_message
-    await ensure_user(u.id, u.username or "", u.full_name)
-    d = await get_user(u.id)
-
-    if not context.args:
-        await msg.reply_html(
-            f"🎰 <b>Slot Machine</b>\n\n"
-            f"Usage: <code>/slots {MIN_BET}</code>\n"
-            f"Bet range: {fmt(MIN_BET)} – {fmt(MAX_BET)}\n\n"
-            f"💰 Payouts:\n"
-            f"7️⃣7️⃣7️⃣ (jackpot!) — 15x bet\n"
-            f"🅱️🅱️🅱️ / 🍇🍇🍇 / 🍋🍋🍋 — 4x bet\n"
-            f"Any 2 matching — get your bet back (1x)\n"
-            f"No match — you lose the bet\n\n"
-            f"Results come from Telegram's own animation — 100% fair, "
-            f"Iota can't influence the outcome!"
-        ); return
-
-    try:
-        bet = int(context.args[0])
-    except ValueError:
-        await msg.reply_html("❌ Bet must be a number!"); return
-    if bet < MIN_BET or bet > MAX_BET:
-        await msg.reply_html(f"❌ Bet must be between {fmt(MIN_BET)} and {fmt(MAX_BET)}!"); return
-    if d["balance"] < bet:
-        await msg.reply_html(f"❌ Not enough coins! 💰 Balance: {fmt(d['balance'])}"); return
-
-    await deduct_balance(u.id, bet)
-
-    dice_msg = await context.bot.send_dice(msg.chat_id, emoji=DiceEmoji.SLOT_MACHINE)
-    value = dice_msg.dice.value
-    reels = _decode_slot_value(value)
-    multiplier = _payout_multiplier(reels)
-    payout = int(bet * multiplier)
-
-    reel_display = " ".join(reels)
-
-    if multiplier >= 15:
-        result_text = f"🎉🎉 <b>JACKPOT!!!</b> 🎉🎉\n{reel_display}\n\n💰 Won {fmt(payout)} (15x)!"
-        await add_balance(u.id, payout)
-    elif multiplier >= 4:
-        result_text = f"🔥 <b>Three of a kind!</b>\n{reel_display}\n\n💰 Won {fmt(payout)} (4x)!"
-        await add_balance(u.id, payout)
-    elif multiplier >= 1:
-        result_text = f"✨ <b>Two matched!</b>\n{reel_display}\n\n💰 Bet returned — no gain, no loss!"
-        await add_balance(u.id, payout)
-    else:
-        result_text = f"💸 <b>No match.</b>\n{reel_display}\n\nLost {fmt(bet)}. Better luck next time!"
-
-    new_balance = d["balance"] - bet + payout
-    result_text = (
-        f"{mention(u)}\n\n{result_text}\n\n💼 Balance: {fmt(new_balance)}"
+    await update.message.reply_html(
+        bot_game_disabled_msg("Slot Machine (casino)") + PVP_GAMES_HINT
     )
-    try:
-        from utils.progress import record_game_result
-        await record_game_result(u.id, won=(multiplier >= 1), bet=bet, game="slots")
-    except Exception:
-        pass
-    mood = "slot_win" if multiplier >= 4 else ("win" if multiplier >= 1 else "lose")
-    await send_gif_result(context, msg.chat_id, mood, result_text)
-    await _send_art(context, msg.chat_id, lambda: _render_slots(list(reels)),
-                   caption="🎰 ʀᴇᴇʟ ʀᴇsᴜʟᴛ")

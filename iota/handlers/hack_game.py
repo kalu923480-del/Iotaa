@@ -26,6 +26,7 @@ from utils.game_ui import send_gif_result
 from utils.helpers import mention, fmt
 from utils.fonts import sc
 from utils.system_gate import games_gate
+from utils.game_rules import GAME_MIN_BET, validate_bet
 
 # Active hack games: chat_id -> game_state
 _hack_games: dict = {}
@@ -69,8 +70,8 @@ async def hack_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_html("❌ Invalid format! Example: <code>/hack 1000 4</code>"); return
 
-    if reward < 100:
-        await update.message.reply_html("❌ Minimum reward 100 coins!"); return
+    if reward < GAME_MIN_BET:
+        await update.message.reply_html(f"❌ Minimum reward is {GAME_MIN_BET} coins!"); return
     if not (3 <= length <= 6):
         await update.message.reply_html("❌ Password length 3 se 6 ke beech honi chahiye!"); return
 

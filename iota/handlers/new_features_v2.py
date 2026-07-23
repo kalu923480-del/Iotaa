@@ -45,6 +45,7 @@ from utils.mongo_db import (
 )
 from utils.system_gate import economy_gate, village_gate
 from utils.ai_provider import call_ai
+from utils.game_rules import bot_game_disabled_msg, PVP_GAMES_HINT
 
 logger = logging.getLogger(__name__)
 
@@ -545,52 +546,11 @@ async def giveaway_join_callback(update: Update, context: ContextTypes.DEFAULT_T
             await q.answer("You already joined!", show_alert=False)
 
 
-# ════════════════════════════════════════════════════════════════════
-# Lottery tuning — ticket price (coins) and per-ticket win probability.
-LOTTERY_TICKET_COST = 500       # coins to buy one ticket
-LOTTERY_WIN_CHANCE  = 0.02      # 2% chance to hit the jackpot per ticket
-
 @economy_gate
 async def lottery_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message; u = update.effective_user; chat = update.effective_chat
-    if chat.type == "private":
-        await msg.reply_html("🚫 " + sc("Groups only.")); return
-    await ensure_user(u.id, u.username or "", u.full_name)
-    pool = await get_lottery_pool(chat.id)
-
-    if not context.args:
-        await msg.reply_html(
-            f"🎟️ <b>{sc('Lottery')}</b>\n\n"
-            f"💰 {sc('Current jackpot')}: {fmt(pool)}\n"
-            f"🎫 {sc('Ticket price')}: {fmt(LOTTERY_TICKET_COST)}\n"
-            f"🎲 {sc('Win chance per ticket')}: {int(LOTTERY_WIN_CHANCE*100)}%\n\n"
-            f"{sc('Buy a ticket')}: /lottery buy"
-        )
-        return
-
-    if context.args[0].lower() != "buy":
-        await msg.reply_html("🎟️ " + sc("Usage: /lottery buy")); return
-
-    d = await get_user(u.id)
-    if d.get("balance", 0) < LOTTERY_TICKET_COST:
-        await msg.reply_html(f"❌ {sc('You need')} {fmt(LOTTERY_TICKET_COST)} {sc('to buy a ticket.')}"); return
-
-    from utils.mongo_db import deduct_balance, add_balance
-    await deduct_balance(u.id, LOTTERY_TICKET_COST)
-
-    if random.random() < LOTTERY_WIN_CHANCE and pool > 0:
-        await add_balance(u.id, pool)
-        await reset_lottery_pool(chat.id)
-        await msg.reply_html(
-            f"🎉🎟️ <b>{sc('JACKPOT!')}</b> {mention(u)} {sc('won')} <b>{fmt(pool)}</b>! 🏆"
-        )
-    else:
-        await add_to_lottery_pool(chat.id, LOTTERY_TICKET_COST)
-        new_pool = await get_lottery_pool(chat.id)
-        await msg.reply_html(
-            f"🎟️ {sc('No win this time!')} {sc('Jackpot is now')} {fmt(new_pool)}.\n"
-            f"{sc('Try again')}: /lottery buy"
-        )
+    await update.message.reply_html(
+        bot_game_disabled_msg("Lottery (RNG vs house)") + PVP_GAMES_HINT
+    )
 
 
 # ════════════════════════════════════════════════════════════════════

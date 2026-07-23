@@ -24,6 +24,7 @@ from utils.safe_html import safe_html
 from utils.fonts import sc
 from utils.system_gate import games_gate
 from utils.game_art import send_game_art as _send_art, render_ludo_share as _render_ludo_share
+from utils.game_rules import GAME_MIN_BET, validate_bet, pot_payout
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +325,9 @@ async def ludo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_html("❌ Usage: /ludo [bet_amount]"); return
 
         if bet > 0:
+            ok, err = validate_bet(bet)
+            if not ok:
+                await update.message.reply_html(err); return
             d = await get_user(u.id)
             if d["balance"] < bet:
                 await update.message.reply_html(
@@ -697,7 +701,7 @@ async def _end_game(q, context, gid: str, winner_p: dict):
 
     bet    = game["bet"]
     total  = bet * len(game["players"])
-    prize  = int(total * 0.95)  # 5% fee
+    prize  = pot_payout(total)
 
     # Pay winner
     if prize > 0:

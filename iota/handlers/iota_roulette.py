@@ -46,11 +46,12 @@ from utils.system_gate import games_gate
 from utils.fonts import sc_all
 from utils.game_ui import send_gif_result
 from utils.game_art import send_game_art as _send_art, render_roulette as _render_roulette
+from utils.game_rules import GAME_MIN_BET, GAME_MAX_BET, validate_bet
 
 logger = logging.getLogger(__name__)
 
-MIN_STAKE = 100
-MAX_STAKE = 100_000
+MIN_STAKE = GAME_MIN_BET
+MAX_STAKE = GAME_MAX_BET
 JOIN_SECONDS = 120      # 2-minute joining window (per spec)
 BID_SECONDS = 60        # per-round bidding window
 BETWEEN_ROUNDS = 4       # seconds between rounds so players can breathe
@@ -123,10 +124,11 @@ async def roulette_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await msg.reply_html(sc_all("❌ Amount ek number hona chahiye!"))
         return
-    if stake < MIN_STAKE or stake > MAX_STAKE:
-        await msg.reply_html(sc_all(
-            f"❌ Stake {fmt(MIN_STAKE)} – {fmt(MAX_STAKE)} ke beech hona chahiye!"
-        ))
+    ok, err = validate_bet(stake)
+    if not ok:
+        await msg.reply_html(
+            f"{err}\nStake range: {fmt(MIN_STAKE)} – {fmt(MAX_STAKE)}"
+        )
         return
 
     await ensure_user(u.id, u.username or "", u.full_name)

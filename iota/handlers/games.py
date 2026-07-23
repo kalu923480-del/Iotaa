@@ -24,6 +24,10 @@ from utils.gif_provider import get_gif_for_mood
 from utils.safe_html import placeholder
 from utils.system_gate import games_gate
 from utils.game_art import send_game_art as _send_art, render_dice_row as _render_dice_row, render_bomb
+from utils.game_rules import (
+    parse_bet, validate_bet, pot_payout, bot_game_disabled_msg,
+    PVP_GAMES_HINT, GAME_MIN_BET, GAME_MAX_BET,
+)
 from config import (CARD_FEE_PERCENT, CARD_XP_WIN, CARD_XP_LOSS, ITEMS,
                      CARD_MIN_BET, CARD_MAX_BET, CARD_LOBBY_TIMEOUT_SECONDS)
 
@@ -60,18 +64,20 @@ async def game_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             sc_all(
                 "🎮 <b>Iota Mini Games</b>\n\n"
                 "🃏 /card — Card Game (4 rounds)\n"
-                "🃏 /bet &lt;amount&gt; — Card Game with Bet\n"
+                "🃏 /bet &lt;amount&gt; — Card Game with Bet (min 250)\n"
                 "💣 /bomb — Bomb Passing Game\n"
                 "🎭 /bluff — Bluff Card Game\n"
-                "💻 /hack — Hack the Code\n"
+                "💻 /hack — Hack the Code (min 250)\n"
                 "📝 /wordgame — Word Guess\n"
                 "🎲 /ludo — Ludo\n"
                 "🏆 /leaders — Game Leaderboards\n"
                 "📊 /rank — Your card rank\n"
-                "🎰 /roulette &lt;amount&gt; — Bid-Elimination Tournament\n"
+                "🎰 /roulette &lt;amount&gt; — Bid-Elimination Tournament (min 250)\n"
                 "🤝 /rjoin &lt;amount&gt; — Join a Roulette game\n"
                 "🎯 /bid &lt;amount&gt; — Bid in DM each round\n"
-                "🎡 /wheel — Spin the Iota Wheel (coins/gems)\n\n"
+                "🎡 /wheel — (disabled, use PvP)\n"
+                "🎲 /dice — (disabled vs Iota, use PvP)\n"
+                "🎰 /slots — (disabled, use PvP)\n\n"
                 "Admin: /open | /close"
             ),
             parse_mode="HTML",
@@ -98,18 +104,18 @@ _GAMES_HUB_INFO = {
         "icon": "🃏", "title": "Cᴀʀᴅ Gᴀᴍᴇs",
         "body":
             "🃏 /card — Cᴀʀᴅ Gᴀᴍᴇ (4 ʀᴏᴜɴᴅs)\n"
-            "🃏 /bet &lt;ᴀᴍᴏᴜɴᴛ&gt; — Cᴀʀᴅ Gᴀᴍᴇ ᴡɪᴛʜ Bᴇᴛ\n"
+            "🃏 /bet &lt;ᴀᴍᴏᴜɴᴛ&gt; — Cᴀʀᴅ Gᴀᴍᴇ ᴡɪᴛʜ Bᴇᴛ (ᴍɪɴ 250)\n"
             "🎭 /bluff — Bʟᴜꜰꜰ Cᴀʀᴅ Gᴀᴍᴇ\n"
             "📊 /rank — Yᴏᴜʀ ᴄᴀʀᴅ ʀᴀɴᴋ",
     },
     "luck": {
         "icon": "🎰", "title": "Lᴜᴄᴋ & Cʜᴀɴᴄᴇ",
         "body":
-            "🎰 /slots &lt;ᴀᴍᴏᴜɴᴛ&gt; — Nᴀᴛɪᴠᴇ Sʟᴏᴛ Mᴀᴄʜɪɴᴇ\n"
-            "🎡 /wheel — Sᴘɪɴ Tʜᴇ Iᴏᴛᴀ Wʜᴇᴇʟ\n"
-            "🎲 /roulette &lt;ᴀᴍᴏᴜɴᴛ&gt; — Bɪᴅ-Eʟɪᴍɪɴᴀᴛɪᴏɴ Tᴏᴜʀɴᴀᴍᴇɴᴛ\n"
-            "🤝 /rjoin &lt;ᴀᴍᴏᴜɴᴛ&gt; — Jᴏɪɴ ᴀ Rᴏᴜʟᴇᴛᴛᴇ ɢᴀᴍᴇ\n"
-            "🎯 /bid &lt;ᴀᴍᴏᴜɴᴛ&gt; — Bɪᴅ ɪɴ DM ᴇᴀᴄʜ ʀᴏᴜɴᴅ",
+            "🎰 /slots — (disabled, use PvP)\n"
+            "🎡 /wheel — (disabled, use PvP)\n"
+            "🎲 /roulette &lt;amount&gt; — Bɪᴅ Tᴏᴜʀɴᴀᴍᴇɴᴛ (ᴍɪɴ 250)\n"
+            "🤝 /rjoin &lt;amount&gt; — Jᴏɪɴ Rᴏᴜʟᴇᴛᴛᴇ\n"
+            "🎯 /bid &lt;amount&gt; — Bɪᴅ ɪɴ DM ᴇᴀᴄʜ ʀᴏᴜɴᴅ",
     },
     "multi": {
         "icon": "🐺", "title": "Mᴜʟᴛɪᴘʟᴀʏᴇʀ",
@@ -121,12 +127,9 @@ _GAMES_HUB_INFO = {
     "quick": {
         "icon": "🕹️", "title": "Qᴜɪᴄᴋ Fᴜɴ",
         "body":
-            "🎲 /dice &lt;ᴀᴍᴏᴜɴᴛ&gt; — Dɪᴄᴇ Bᴇᴛ\n"
-            "✊ /rps — Rᴏᴄᴋ Pᴀᴘᴇʀ Sᴄɪssᴏʀs\n"
-            "⭕ /tictactoe — Tɪᴄ Tᴀᴄ Tᴏᴇ\n"
-            "📝 /wordgame — Wᴏʀᴅ Gᴜᴇss\n"
-            "❓ /quiz — Aɪ Qᴜɪᴢ\n"
-            "🪢 /hangman — Hᴀɴɢᴍᴀɴ",
+            "🎲 /dice · /rps — (disabled vs Iota)\n"
+            "⭕ /tictactoe · /chess · /uno · /connect4 — free PvP\n"
+            "📝 /wordgame · /quiz · /hangman — practice (no coins)\n"
     },
     "code": {
         "icon": "💻", "title": "Cᴏᴅᴇ & Bʀᴀɪɴ",
@@ -410,26 +413,13 @@ async def bet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type == "private":
         await update.message.reply_html("🎮 Yᴏᴜ Cᴀɴ Pʟᴀʏ Tʜᴇ Cᴀʀᴅ Gᴀᴍᴇ Iɴ Gʀᴏᴜᴘ Oɴʟʏ."); return
 
-    if not context.args:
+    amount, err = parse_bet(context.args)
+    if err:
+        await update.message.reply_html(err); return
+    if amount is None:
         await update.message.reply_html(
-            f"❌ Usage: /bet {placeholder('amount')}\n"
-            f"Bet range: {fmt(CARD_MIN_BET)} – {fmt(CARD_MAX_BET)}"
+            f"❌ Usage: /bet <amount>\nBet range: {GAME_MIN_BET} – {GAME_MAX_BET}"
         ); return
-    try:
-        amount = int(context.args[0])
-    except ValueError:
-        # 🔴 Was previously just "Invalid amount!" — now tells the user
-        # exactly what's wrong (decimals, letters, etc. all land here).
-        await update.message.reply_html("❌ Invalid amount! Bet must be a whole number (no decimals/letters)."); return
-    # 🔴 FIX: there was previously NO upper bound at all — Python's
-    # arbitrary-precision ints meant even a 30-digit "bet" was accepted
-    # as syntactically valid before the balance check caught it. Also
-    # no minimum, so a 1-coin "bet" was technically allowed. Added real
-    # limits here, consistent with every other betting game in the bot.
-    if amount < CARD_MIN_BET:
-        await update.message.reply_html(f"❌ Minimum bet is {fmt(CARD_MIN_BET)}!"); return
-    if amount > CARD_MAX_BET:
-        await update.message.reply_html(f"❌ Maximum bet is {fmt(CARD_MAX_BET)}!"); return
 
     await ensure_user(u.id, u.username or "", u.full_name)
     d = await get_user(u.id)
@@ -805,8 +795,8 @@ async def _end_game(q, context, gid, p1_name, p2_name, p1c, p1v, p2c, p2v, rw_te
             # Both normal: random winner, fee genuinely applies here now
             winner_id = random.choice([p1_id, p2_id])
             gross = bet*2 if bet else 0
-            fee_applied = int(gross * CARD_FEE_PERCENT / 100)
-            prize_each = gross - fee_applied
+            prize_each = pot_payout(gross, premium=False)
+            fee_applied = gross - prize_each
             winner_ids = [winner_id]
             if prize_each: await add_balance(winner_id, prize_each)
             tie_result_text = f"⚖️ Tɪᴇ! Rᴀɴᴅᴏᴍ Wɪɴɴᴇʀ Sᴇʟᴇᴄᴛᴇᴅ"
@@ -884,8 +874,7 @@ async def _end_game(q, context, gid, p1_name, p2_name, p1c, p1v, p2c, p2v, rw_te
     prize = bet * 2 if bet > 0 else 0
     wd = await get_user(winner_id)
     fee_exempt = wd["is_premium"]
-    fee = 0 if fee_exempt else int(prize * CARD_FEE_PERCENT / 100)
-    net = prize - fee
+    net = pot_payout(prize, premium=fee_exempt)
     if net > 0:
         await add_balance(winner_id, net)
 
@@ -1061,12 +1050,15 @@ async def _bomb_explode(context, gid, chat_id):
 async def wordgame_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user; chat = update.effective_chat
     await ensure_user(u.id, u.username or "", u.full_name)
-    word   = random.choice(WORD_LIST)
-    reward = len(word) * 200
-    _word_games[chat.id] = {"word": word, "masked": list("_"*len(word)), "reward": reward, "attempts": 6}
+    word = random.choice(WORD_LIST)
+    # Practice mode only — no free house coins (economy is PvP bets ≥ 250).
+    _word_games[chat.id] = {
+        "word": word, "masked": list("_" * len(word)),
+        "reward": 0, "attempts": 6,
+    }
     await update.message.reply_html(
-        f"📝 <b>Word Game!</b>\nHost: {mention(u)}\n💰 Reward: {fmt(reward)}\n\n"
-        f"Word: <code>{' '.join('_'*len(word))}</code>  ({len(word)} letters)\n"
+        f"📝 <b>Word Game</b> (practice — no coins)\nHost: {mention(u)}\n\n"
+        f"Word: <code>{' '.join('_' * len(word))}</code>  ({len(word)} letters)\n"
         f"Attempts: 6\n\nReply with a single letter!"
     )
 
@@ -1084,9 +1076,9 @@ async def wordgame_letter_handler(update: Update, context: ContextTypes.DEFAULT_
         game["masked"] = masked
         if "_" not in masked:
             _word_games.pop(chat.id, None)
-            await add_balance(u.id, game["reward"])
             await update.message.reply_html(
-                f"🎉 {mention(u)} guessed: <b>{word}</b>!\n💰 +{fmt(game['reward'])}"
+                f"🎉 {mention(u)} guessed: <b>{word}</b>!\n"
+                f"<i>Practice win — coins only from PvP bets (/bet, /roulette…)</i>"
             )
         else:
             await update.message.reply_html(
@@ -1108,71 +1100,6 @@ _DICE_FACES = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
 
 @games_gate
 async def dice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /dice <amount> — roll a die against Iota's die.
-    Higher roll wins 2x your bet (5% fee for non-premium, premium exempt),
-    a tie pushes (your bet is returned), a lower roll loses the bet.
-    """
-    u = update.effective_user
-    chat = update.effective_chat
-    if chat.type == "private":
-        await update.message.reply_html("🎲 Yᴏᴜ Cᴀɴ Pʟᴀʏ Dɪᴄᴇ Iɴ Gʀᴏᴜᴘ Oɴʟʏ."); return
-    if not context.args:
-        await update.message.reply_html(
-            f"❌ {sc('Usage')}: /dice {placeholder('amount')}\n"
-            f"{sc('Bet range')}: {fmt(CARD_MIN_BET)} – {fmt(CARD_MAX_BET)}"
-        ); return
-    try:
-        amount = int(context.args[0])
-    except ValueError:
-        await update.message.reply_html("❌ Invalid amount! Bet must be a whole number."); return
-    if amount < CARD_MIN_BET:
-        await update.message.reply_html(f"❌ {sc('Minimum bet is')} {fmt(CARD_MIN_BET)}!"); return
-    if amount > CARD_MAX_BET:
-        await update.message.reply_html(f"❌ {sc('Maximum bet is')} {fmt(CARD_MAX_BET)}!"); return
-
-    await ensure_user(u.id, u.username or "", u.full_name)
-    d = await get_user(u.id)
-    if d["balance"] < amount:
-        await update.message.reply_html(
-            f"❌ {sc('Need')} {fmt(amount)}, {sc('you have')} {fmt(d['balance'])}"
-        ); return
-
-    await deduct_balance(u.id, amount)
-    p = random.randint(1, 6)
-    b = random.randint(1, 6)
-
-    if p > b:
-        winnings = amount
-        if not d.get("is_premium"):
-            winnings = int(winnings * (100 - CARD_FEE_PERCENT) / 100)
-        await add_balance(u.id, amount + winnings)
-        await update.message.reply_html(
-            f"🎲 {mention(u)}\n"
-            f"{sc('You')}: {_DICE_FACES[p]}   {sc('Iota')}: {_DICE_FACES[b]}\n"
-            f"🏆 {sc('You Win')}!  💰 +{fmt(winnings)}"
-        )
-        try:
-            from utils.progress import record_game_result
-            await record_game_result(u.id, won=True, bet=amount, game="dice")
-        except Exception:
-            pass
-        await _send_art(context, chat.id, lambda: _render_dice_row([p, b]),
-                        caption="🎲 ʀᴏʟʟ ʀᴇsᴜʟᴛ")
-    elif p == b:
-        await add_balance(u.id, amount)
-        await update.message.reply_html(
-            f"🎲 {mention(u)}\n"
-            f"{sc('You')}: {_DICE_FACES[p]}   {sc('Iota')}: {_DICE_FACES[b]}\n"
-            f"🤝 {sc('Tie')}! {sc('Bet returned')} {fmt(amount)}"
-        )
-        await _send_art(context, chat.id, lambda: _render_dice_row([p, b]),
-                        caption="🎲 ʀᴏʟʟ ʀᴇsᴜʟᴛ")
-    else:
-        await update.message.reply_html(
-            f"🎲 {mention(u)}\n"
-            f"{sc('You')}: {_DICE_FACES[p]}   {sc('Iota')}: {_DICE_FACES[b]}\n"
-            f"💀 {sc('You Lose')}!  💰 -{fmt(amount)}"
-        )
-        await _send_art(context, chat.id, lambda: _render_dice_row([p, b]),
-                        caption="🎲 ʀᴏʟʟ ʀᴇsᴜʟᴛ")
+    await update.message.reply_html(
+        bot_game_disabled_msg("Dice") + PVP_GAMES_HINT
+    )

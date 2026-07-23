@@ -11,6 +11,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Poll
 from telegram.ext import ContextTypes
 from utils.mongo_db import ensure_user, get_user, update_user, add_balance, deduct_balance, get_db
 from utils.helpers import mention, fmt, xp_level, rank_title
+from utils.game_rules import bot_game_disabled_msg, PVP_GAMES_HINT
 
 # ─────────────────────────────────────────────────────────────
 #  /calc — Calculator
@@ -429,49 +430,8 @@ async def afk_check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #  /roll — Dice Roll (with bet)
 # ─────────────────────────────────────────────────────────────
 async def diceroll_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u   = update.effective_user
-    chat = update.effective_chat
-    await ensure_user(u.id, u.username or "", u.full_name)
-
-    bet = 0
-    if context.args:
-        try:
-            bet = max(0, int(context.args[0]))
-        except ValueError:
-            pass
-
-    d = await get_user(u.id)
-
-    if bet > 0:
-        if d["balance"] < bet:
-            await update.message.reply_html(
-                f"❌ Kafi coins nahi!\n💰 Balance: {fmt(d['balance'])}"
-            ); return
-        await deduct_balance(u.id, bet)
-
-    # Roll dice
-    my_roll = random.randint(1, 6)
-    bot_roll = random.randint(1, 6)
-    dice_emoji = ["", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
-
-    if bet > 0:
-        if my_roll > bot_roll:
-            prize = bet * 2
-            await add_balance(u.id, prize)
-            result = f"🎉 <b>JEET GAYE!</b> +{fmt(prize)} coins!"
-        elif my_roll < bot_roll:
-            result = f"😔 <b>Haar gaye!</b> -{fmt(bet)} coins"
-        else:
-            await add_balance(u.id, bet)
-            result = f"🤝 <b>Barabar!</b> Bet wapas mili."
-    else:
-        result = ""
-
     await update.message.reply_html(
-        f"🎲 <b>Dice Roll!</b>\n\n"
-        f"👤 {mention(u)}: {dice_emoji[my_roll]} ({my_roll})\n"
-        f"🤖 Bot: {dice_emoji[bot_roll]} ({bot_roll})\n\n"
-        + (f"{result}" if bet else f"Koi bet nahi — /roll [amount] se bet lagao!")
+        bot_game_disabled_msg("Dice Roll (vs Iota)") + PVP_GAMES_HINT
     )
 
 
@@ -560,43 +520,6 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #  /flip — Coin Flip (standalone, separate from card game)
 # ─────────────────────────────────────────────────────────────
 async def coinflip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u   = update.effective_user
-    await ensure_user(u.id, u.username or "", u.full_name)
-
-    choice = context.args[0].lower() if context.args else ""
-    bet    = 0
-    if len(context.args) >= 2:
-        try:
-            bet = max(0, int(context.args[1]))
-        except ValueError:
-            pass
-
-    if choice not in ("heads", "tails", "h", "t"):
-        await update.message.reply_html(
-            "🪙 <b>Coin Flip</b>\n\n"
-            "Usage: <code>/coinflip heads 500</code>\n"
-            "       <code>/coinflip tails 1000</code>\n"
-            "Win = 2x bet!"
-        ); return
-
-    chosen = "heads" if choice in ("heads", "h") else "tails"
-    result = random.choice(["heads", "tails"])
-    won    = chosen == result
-    emoji  = "🦅" if result == "heads" else "🌐"
-
-    d = await get_user(u.id)
-    if bet > 0:
-        if d["balance"] < bet:
-            await update.message.reply_html(f"❌ Balance kam hai! 💰 {fmt(d['balance'])}"); return
-        await deduct_balance(u.id, bet)
-        if won:
-            await add_balance(u.id, bet * 2)
-
-    result_txt = f"{'✅ JEETE!' if won else '❌ Hare!'} {'+' if won else '-'}{fmt(bet)} coins" if bet else ""
-
     await update.message.reply_html(
-        f"🪙 <b>Coin Flip!</b>\n\n"
-        f"Tumne choose kiya: <b>{chosen.upper()}</b>\n"
-        f"Sikka gira: {emoji} <b>{result.upper()}</b>\n\n"
-        f"{result_txt if bet else '💡 Bet lagao: /coinflip heads 500'}"
+        bot_game_disabled_msg("Coin Flip (vs Iota)") + PVP_GAMES_HINT
     )

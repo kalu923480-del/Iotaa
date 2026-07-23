@@ -41,8 +41,8 @@ COMMAND_GROUPS = {
         "/wallet — deposit/withdraw between balance and wallet",
         "/toprich — richest players leaderboard",
         "/shop — spend your coins on items",
-        "/slots <bet> — casino slot machine (real Telegram animation, fair odds)",
-        "/lottery buy — buy a ticket, win the group jackpot",
+        "/slots <bet> — (disabled) use /bet or /roulette for PvP coin games",
+        "/lottery buy — (disabled) use /bet or /roulette for PvP coin games",
     ],
     "🏦 Banking & Market": [
         "/bank — wallet + bank + savings overview and net worth",
@@ -58,17 +58,23 @@ COMMAND_GROUPS = {
         "list <item> <price> [qty], listings [page], buyid <id>, mine, cancel <id>",
     ],
     "🎮 Games": [
-        "/card — card game", "/bomb — bomb-passing game", "/bluff — bluff card game",
-        "/werewolf — social deduction game (5-10 players)",
-        "/hack — password hacking mini-game", "/wordgame — word guess",
-        "/hangman — hangman", "/quiz — AI-powered quiz",
-        "/tictactoe — tic tac toe", "/rps — rock paper scissors",
-        "/ludo — ludo (chat mode or visual Mini App)", "/leaders — leaderboard",
+        "/card — card game (PvP)",
+        "/bomb — bomb-passing game (PvP, free)",
+        "/bluff — bluff card game (PvP)",
+        "/werewolf — social deduction game (5-10 players, PvP)",
+        "/hack — password hacking mini-game (PvP, min 250)",
+        "/wordgame — word guess (free)",
+        "/hangman — hangman (free)",
+        "/quiz — AI-powered quiz (free)",
+        "/tictactoe — tic tac toe (free PvP)",
+        "/rps — (disabled vs Iota; use /tictactoe or /chess)",
+        "/ludo — ludo (chat mode or visual Mini App, PvP)",
+        "/leaders — leaderboard",
         "/roulette <amount> [coins|gems] — bid-elimination tournament "
         "(host starts, friends /rjoin to enter, then DM /bid each round; "
         "lowest bidder eliminated every round, last player wins the pot)",
-        "/wheel — spin the Iota Wheel for a chance at coins/gems "
-        "(1h cooldown, /wheel gems to skip it with 💎)",
+        "/wheel — (disabled) use /bet or /roulette for PvP coin games",
+        "/dice — (disabled vs Iota, use /bet or /roulette for PvP)",
     ],
     "🧸 Friends & Social": [
         "/slap /punch /kiss /hug /bite — fun action commands",
@@ -145,13 +151,15 @@ def build_help_text_compact() -> str:
     """
     lines = [
         "Main features users can ask about (short answers only):",
-        "• Economy: /daily /bal /rob /kill /protect /give /shop /slots /lottery",
+        "• Economy: /daily /bal /rob /kill /protect /give /shop",
         "• Bank: /bank /deposit /withdraw /transfer /loan /bazaar",
-        "• Games: /ludo /werewolf /bluff /tictactoe /rps /quiz /roulette /wheel",
+        "• PvP Games (users only, money games min bet 250): /bet /card /roulette /ludo /hack /bluff /werewolf /tictactoe /chess /uno /connect4 /bomb",
+        "• Free games: /bomb /hangman /quiz /wordgame /chess /uno /connect4",
         "• Fun: /slap /kiss /hug /truth /dare /meme",
         "• Social: /valentine /last_seen /connect",
         "• Village: village war cmds if they ask",
         "• Group admin (if they are admin): /setwelcome /setrules /prot /lock /warn",
+        "• Disabled vs-Iota games: use PvP alternatives like /bet /roulette /ludo",
         "Owner/admin internal tools: you do NOT know them — say you don't know.",
     ]
     return "\n".join(lines)

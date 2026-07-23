@@ -25,6 +25,7 @@ from utils.helpers import mention, fmt
 from utils.ai_provider import call_ai
 from utils.system_gate import games_gate
 from utils.game_art import send_game_art as _send_art, render_hangman as _render_hangman
+from utils.game_rules import bot_game_disabled_msg, PVP_GAMES_HINT
 from config import SARVAM_API_KEY, SARVAM_CHAT_URL
 
 logger = logging.getLogger(__name__)
@@ -123,11 +124,10 @@ async def ttt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             win_id = game["p1"] if symbol == "X" else game["p2"]
             win_name = game["p1_name"] if symbol == "X" else game["p2_name"]
-            reward = 200
-            await add_balance(win_id, reward)
             await q.edit_message_text(
                 f"⭕❌ <b>Tic Tac Toe!</b>\n\n"
-                f"🏆 Winner: <b>{win_name}</b> ({symbol})\n💰 +{fmt(reward)}",
+                f"🏆 Winner: <b>{win_name}</b> ({symbol})\n"
+                f"🎉 Free PvP — no coins!",
                 parse_mode="HTML"
             )
     else:
@@ -154,45 +154,27 @@ RPS_WINS  = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
 
 @games_gate
 async def rps_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user; msg = update.effective_message
-    await ensure_user(u.id, u.username or "", u.full_name)
-    import uuid; gid = str(uuid.uuid4())[:6]
-    _rps_games[gid] = {"player": u.id, "chat_id": update.effective_chat.id}
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🪨 Rock",     callback_data=f"rps_{gid}_rock"),
-        InlineKeyboardButton("📄 Paper",    callback_data=f"rps_{gid}_paper"),
-        InlineKeyboardButton("✂️ Scissors", callback_data=f"rps_{gid}_scissors"),
-    ]])
-    await msg.reply_html(
-        f"✊ <b>Rock Paper Scissors!</b>\n\n{mention(u)}, choose your move!",
-        reply_markup=kb
+    await update.message.reply_html(
+        bot_game_disabled_msg("Rock Paper Scissors (vs Iota)") + PVP_GAMES_HINT
     )
 
 
 async def rps_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; u = q.from_user; await q.answer()
-    parts = q.data.split("_"); gid = parts[1]; move = parts[2]
-    game = _rps_games.pop(gid, None)
-    if not game: await q.edit_message_text("❌ Expired!"); return
-    if game["player"] != u.id:
-        await q.answer("Not your game!", show_alert=True); return
-
-    bot_move = random.choice(["rock", "paper", "scissors"])
-    p_e = RPS_EMOJI[move]; b_e = RPS_EMOJI[bot_move]
-
-    if move == bot_move:
-        result = "🤝 Draw!"
-    elif RPS_WINS[move] == bot_move:
-        result = "🏆 You Win! +$150"
-        await add_balance(u.id, 150)
-    else:
-        result = "😢 You Lose!"
-
-    await q.edit_message_text(
-        f"✊ <b>RPS Result!</b>\n\n"
-        f"You: {p_e} vs Bot: {b_e}\n\n<b>{result}</b>",
-        parse_mode="HTML"
-    )
+    """Legacy vs-bot RPS callbacks — money mode removed; clear any old lobby."""
+    q = update.callback_query
+    await q.answer()
+    parts = (q.data or "").split("_")
+    if len(parts) >= 2:
+        _rps_games.pop(parts[1], None)
+    try:
+        await q.edit_message_text(
+            bot_game_disabled_msg("Rock Paper Scissors (vs Iota)")
+            + "\n"
+            + PVP_GAMES_HINT,
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -214,15 +196,14 @@ async def hangman_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = random.choice(HANGMAN_WORDS)
     _hangman_games[chat.id] = {
         "word": word, "guessed": [], "wrong": 0,
-        "max_wrong": 6, "player": u.id, "reward": len(word) * 150
+        "max_wrong": 6, "player": u.id, "reward": 0,  # practice — no house coins
     }
     masked = " ".join("_" if c not in [] else c for c in word)
     await update.message.reply_html(
-        f"🎭 <b>Hangman!</b>\n\n{mention(u)} started!\n"
+        f"🎭 <b>Hangman</b> (practice — no coins)\n\n{mention(u)} started!\n"
         f"Word: <code>{masked}</code>  ({len(word)} letters)\n"
         f"Lives: {'❤️' * 6}\n\n"
-        f"Reply with a single letter to guess!\n"
-        f"💰 Reward: {fmt(len(word)*150)}"
+        f"Reply with a single letter to guess!"
     )
 
 
@@ -242,9 +223,9 @@ async def hangman_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         masked = " ".join(c if c in guessed else "_" for c in word)
         if "_" not in masked:
             _hangman_games.pop(chat.id, None)
-            await add_balance(u.id, game["reward"])
             await update.message.reply_html(
-                f"🎉 {mention(u)} guessed: <b>{word}</b>!\n💰 +{fmt(game['reward'])}"
+                f"🎉 {mention(u)} guessed: <b>{word}</b>!\n"
+                f"<i>Practice win — coins only from PvP bets</i>"
             )
             await _send_art(context, chat.id,
                            lambda: _render_hangman(0),
@@ -358,8 +339,8 @@ async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         q_data = random.choice(QUIZ_QUESTIONS)
 
     import uuid; gid = str(uuid.uuid4())[:6]
-    reward = random.randint(250, 500)
-    _quiz_games[gid] = {"chat_id": chat.id, "answer": q_data["ans"], "reward": reward}
+    # Practice mode — no free house coins (economy is PvP bets ≥ 250)
+    _quiz_games[gid] = {"chat_id": chat.id, "answer": q_data["ans"], "reward": 0}
 
     opts = q_data["opts"]
     kb = InlineKeyboardMarkup([
@@ -373,7 +354,8 @@ async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cat_txt = f"\n📂 Category: <i>{q_data.get('category', category or 'general')}</i>" if ai_generated else ""
 
     await thinking.edit_text(
-        f"{tag}!{cat_txt}\n\n<b>{q_data['q']}</b>\n\n💰 Reward: {fmt(reward)}",
+        f"{tag}!{cat_txt}\n\n<b>{q_data['q']}</b>\n\n"
+        f"<i>Practice — no coins (use /bet · /roulette for money)</i>",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -403,9 +385,9 @@ async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game = _quiz_games.pop(gid, None)
     if not game: return
     if choice == game["answer"]:
-        await add_balance(u.id, game["reward"])
         await q.edit_message_text(
-            f"✅ <b>Correct!</b> {mention(u)} wins!\n💰 +{fmt(game['reward'])}",
+            f"✅ <b>Correct!</b> {mention(u)} wins!\n"
+            f"<i>Practice — coins only from PvP bets (min 250)</i>",
             parse_mode="HTML"
         )
     else:
