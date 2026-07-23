@@ -9,3 +9,4 @@ downloads/
 __pycache__/
 *.session-journalIotaXMedia/assets/cookies.txt
 IotaXMedia/assets/iota/welcome_bgs/custom/
+LOCAL_SECRETS_BACKUP.md
