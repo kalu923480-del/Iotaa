@@ -3,7 +3,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from IotaXMedia import app
 
 
-TOTAL_SECTIONS = 29
+TOTAL_SECTIONS = 30
 
 # Help sections that list owner/sudo-only features (marked "[Only for Sudoers]").
 # These buttons are hidden from normal users and only shown to sudoers/owner.

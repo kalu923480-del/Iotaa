@@ -148,6 +148,15 @@ async def cached_youtube_search(query: str) -> List[Dict]:
     return result
 
 
+async def youtube_search_multi(query: str, limit: int = 8) -> List[Dict]:
+    """Multi-result YouTube search used by autoplay candidate scoring."""
+    try:
+        data = await VideosSearch(query, limit=max(1, int(limit))).next()
+        return data.get("result", []) or []
+    except Exception:
+        return []
+
+
 # === Main Class ===
 class YouTubeAPI:
     def __init__(self) -> None:

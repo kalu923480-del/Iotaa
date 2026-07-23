@@ -51,13 +51,19 @@ def get_cookie_file() -> Optional[str]:
     """Writable temp copy of cookies (local or Render /etc/secrets)."""
     try:
         import shutil
+        from pathlib import Path
 
         src = resolve_cookie_path()
         if not src:
             return None
-        fd, tmp = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
+        tmp_dir = "/tmp/kilo"
+        Path(tmp_dir).mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            prefix="yt_cookies_", suffix=".txt", dir=tmp_dir
+        )
         os.close(fd)
         shutil.copy2(src, tmp)
+        os.chmod(tmp, 0o600)
         return tmp
     except Exception:
         pass
@@ -75,7 +81,10 @@ def find_cached_file(video_id: str) -> Optional[str]:
 
 
 def get_ytdlp_base_opts() -> Dict[str, object]:
-    opts = {
+    import shutil
+    from pathlib import Path
+
+    opts: Dict[str, object] = {
         "outtmpl": f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
         "quiet": True,
         "no_warnings": True,
@@ -83,24 +92,36 @@ def get_ytdlp_base_opts() -> Dict[str, object]:
         "overwrites": True,
         "continuedl": False,
         "noprogress": True,
-        "concurrent_fragment_downloads": 16,
+        "concurrent_fragment_downloads": 8,
         "http_chunk_size": 1 << 20,
-        "socket_timeout": 15,
-        "retries": 2,
-        "fragment_retries": 2,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
         "cachedir": str(CACHE_DIR),
         "ignoreerrors": False,
         "merge_output_format": "mp4",
-        # Let yt-dlp pick clients; forcing android breaks cookie auth
+        "remote_components": ["ejs:github"],
     }
-    # Enable Deno JS runtime when available (required for modern YouTube n-sig)
-    import shutil
-
-    deno_bin = os.path.expanduser("~/.deno/bin/deno")
-    if not (os.path.isfile(deno_bin) and os.access(deno_bin, os.X_OK)):
-        deno_bin = shutil.which("deno") or ""
-    if deno_bin:
-        opts["js_runtimes"] = {"deno": {"path": deno_bin}}
+    runtimes: Dict[str, object] = {}
+    for node in (
+        shutil.which("node"),
+        "/home/codespace/nvm/current/bin/node",
+        "/usr/local/share/nvm/current/bin/node",
+        str(Path.home() / "nvm" / "current" / "bin" / "node"),
+    ):
+        if node and Path(node).is_file():
+            runtimes["node"] = {"path": node}
+            break
+    for deno in (
+        shutil.which("deno"),
+        str(Path.home() / ".deno" / "bin" / "deno"),
+        "/usr/local/bin/deno",
+    ):
+        if deno and Path(deno).is_file():
+            runtimes["deno"] = {"path": deno}
+            break
+    if runtimes:
+        opts["js_runtimes"] = runtimes
     if cookiefile := get_cookie_file():
         opts["cookiefile"] = cookiefile
     return opts
