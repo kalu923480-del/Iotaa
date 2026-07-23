@@ -89,12 +89,18 @@ async def init():
 
     await StreamController.decorators()
 
-    # Render free-tier 24/7: HTTP health server + self-ping
+    # Render free-tier 24/7: HTTP /health + self-ping (same pattern as iota/)
+    _stop_health = None
     try:
-        from IotaXMedia.utils.keep_alive import start_health_server, render_keepalive_job
+        from IotaXMedia.utils.keep_alive import (
+            start_health_server,
+            stop_health_server,
+            render_keepalive_job,
+        )
 
         await start_health_server()
         asyncio.create_task(render_keepalive_job(interval=300))
+        _stop_health = stop_health_server
     except Exception as e:
         LOGGER("IotaXMedia").warning(f"⚠️ Health/keep-alive not started: {e}")
 
@@ -104,6 +110,11 @@ async def init():
     try:
         await idle()
     finally:
+        try:
+            if _stop_health:
+                await _stop_health()
+        except Exception:
+            pass
         try:
             await app.stop()
         except Exception:

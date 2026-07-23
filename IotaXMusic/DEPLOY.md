@@ -1,16 +1,15 @@
-# Iota Music Bot — Alag Render Account pe Deploy (24/7)
+# Iota Music Bot — Render Deploy (24/7)
 
-Sirf **`IotaXMusic/`** folder. Economy bot isme nahi — wo alag account pe  
-(`iota/DEPLOY.md`) taaki free-tier sleep/load alag rahe.
+Sirf **`IotaXMusic/`** folder. Economy bot alag account pe: [`iota/DEPLOY.md`](../iota/DEPLOY.md).
 
 ---
 
-## Account B setup (sirf music bot)
+## Account B — Music only (recommended)
 
 ### 1) Alag Render account
-Economy wale se **different** Render login/account use karo (load split).
+Economy wale se **different** Render account (load split / free-tier sleep alag).
 
-### 2) New Web Service — Docker (recommended)
+### 2) New Web Service → Docker
 
 | Field | Value |
 |-------|--------|
@@ -19,63 +18,98 @@ Economy wale se **different** Render login/account use karo (load split).
 | **Dockerfile Path** | `./Dockerfile` |
 | **Docker Context** | `.` |
 | **Health Check Path** | `/health` |
-| **Plan** | Free |
+| **Plan** | Free (or paid for always-on) |
 
-Docker = `ffmpeg` + `deno` included (YouTube ke liye zaroori).
+Docker includes `ffmpeg` + `deno` (YouTube downloads).
 
 ### 3) Environment variables
 
 | Key | Required | Notes |
 |-----|----------|--------|
-| `API_ID` | yes | my.telegram.org |
-| `API_HASH` | yes | my.telegram.org |
-| `BOT_TOKEN` | yes | @Iotamusicbot token |
-| `OWNER_ID` | yes | aapka user ID |
-| `STRING_SESSION` | yes | `python3 session.py` se |
-| `MONGO_DB_URI` | yes | music Mongo URI |
-| `LOGGER_ID` | recommended | log group ID, ya `0` |
-| `COOKIE_URL` | optional | raw Pastebin cookies URL |
-| `COOKIE_FILE` | optional | e.g. `/etc/secrets/cookies.txt` |
+| `API_ID` | **yes** | https://my.telegram.org |
+| `API_HASH` | **yes** | my.telegram.org |
+| `BOT_TOKEN` | **yes** | @BotFather |
+| `OWNER_ID` | **yes** | your Telegram user id |
+| `STRING_SESSION` | **yes** | run `python3 session.py` locally |
+| `MONGO_DB_URI` | **yes** | MongoDB Atlas URI |
+| `LOGGER_ID` | optional | log group id, or `0` |
+| `BOT_USERNAME` | yes | e.g. `Iotamusicbot` |
+| `COOKIE_URL` | recommended | raw Pastebin Netscape cookies |
+| `COOKIE_FILE` | optional | default `/etc/secrets/cookies.txt` |
+| `KEEPALIVE_URL` | optional | only if self-ping missing after deploy |
+| `PORT` | auto | Render injects `8080` |
 
-### Render Secret File (recommended for cookies)
+### 4) Cookies (YouTube play)
 
-1. Render → Service → **Environment** → **Secret Files**
-2. Filename: `cookies.txt` (Netscape format content)
-3. Mount path is automatic: `/etc/secrets/cookies.txt`
-4. Leave `COOKIE_URL` empty — bot auto-reads `/etc/secrets/cookies.txt`
+**Option A — Secret File (best on Render)**  
+1. Service → Environment → **Secret Files**  
+2. Filename: `cookies.txt` (Netscape format)  
+3. Bot reads `/etc/secrets/cookies.txt` automatically  
 
-Priority: `COOKIE_FILE` env → `/etc/secrets/cookies.txt` → local `IotaXMedia/assets/cookies.txt` → `COOKIE_URL` fetch
-| `BOT_USERNAME` | yes | `Iotamusicbot` |
-| `PORT` | auto | Render injects |
-
-### COOKIE_URL
-1. Browser se YouTube Netscape `cookies.txt` export  
-2. Pastebin Unlisted → **Raw** link  
+**Option B — COOKIE_URL**  
+1. Export YouTube Netscape cookies  
+2. Pastebin Unlisted → **Raw** URL  
 3. `COOKIE_URL=https://pastebin.com/raw/XXXX`
 
-### 4) Deploy → logs check
+### 5) Deploy → logs
 
 Expect:
 ```
 YouTube cookies loaded…
+Health server listening on 0.0.0.0:8080
+Keep-alive self-ping → https://….onrender.com/health every 300s
 Iota Music Robot Started Successfully…
-Health server listening…
 ```
 
-### 5) Test
-Group me bot + assistant admin → VC on → `/play udi udi`
+If keep-alive says disabled: set  
+`KEEPALIVE_URL=https://YOUR-SERVICE.onrender.com` → Manual Deploy.
+
+### 6) Test
+1. Add bot + assistant as **admin** in a group  
+2. Start voice chat  
+3. `/play udi udi`  
+4. Open `https://YOUR-SERVICE.onrender.com/health` → `{"ok":true,...}`
+
+---
+
+## 24/7 (built-in, same idea as iota economy bot)
+
+| Layer | What |
+|-------|------|
+| Health | `GET /health` + `GET /` |
+| Self-ping | every **5 min** using `RENDER_EXTERNAL_URL` |
+| Fallback | set `KEEPALIVE_URL` after first deploy |
+| Extra | [UptimeRobot](https://uptimerobot.com) → same `/health` every 5 min |
+
+Free tier can still restart occasionally; paid instance is more stable for VC.
 
 ---
 
 ## Blueprint alternative
 
-**New → Blueprint** → same repo → **Root Directory = `IotaXMusic`**  
-→ uses `IotaXMusic/render.yaml` only (economy service create nahi hoga).
+**New → Blueprint** → repo → **Root Directory = `IotaXMusic`**  
+→ uses only `IotaXMusic/render.yaml` (economy service will **not** be created).
 
 ---
 
-## Important
+## Local session string
 
-- Is account pe **iota economy bot mat chalao**
-- `.env` / `cookies.txt` / `*.session` git me mat daalo
-- Free tier: bot `/health` self-ping karta hai (24/7). Optional: UptimeRobot same URL
+```bash
+cd IotaXMusic
+python3 session.py
+# paste STRING_SESSION into Render env
+```
+
+---
+
+## Security
+
+Never commit: `.env`, `cookies.txt`, `*.session`  
+If leaked: rotate BotFather token, Mongo password, and session string.
+
+---
+
+## Do not
+
+- Run **iota** economy bot on this same free service  
+- Put both bots in one free instance (sleep + RAM issues)

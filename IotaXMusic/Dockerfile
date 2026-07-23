@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8080 \
-    PATH="/root/.deno/bin:${PATH}"
+    PATH="/root/.deno/bin:/usr/local/bin:${PATH}"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -22,12 +22,13 @@ RUN pip install -U pip setuptools wheel && \
 
 COPY . .
 
-# Ensure start script is executable
-RUN chmod +x start.sh start 2>/dev/null || true
+RUN chmod +x start.sh start 2>/dev/null || true && \
+    mkdir -p downloads cache IotaXMedia/assets
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=40s --retries=3 \
+# Render uses healthCheckPath; this is extra for Docker runtimes
+HEALTHCHECK --interval=60s --timeout=10s --start-period=90s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/health" || exit 1
 
 CMD ["bash", "start.sh"]

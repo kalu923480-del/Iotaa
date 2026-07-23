@@ -1,53 +1,61 @@
-# Iota Monorepo — Alag-Alag Render Accounts (recommended)
+# Iota Monorepo — Separate Render Accounts (24/7)
 
 **Load kam = har bot alag free instance / alag Render account.**
 
-| Bot | Folder | Deploy guide | Render Root Directory |
-|-----|--------|--------------|------------------------|
-| Economy / games / AI | `iota/` | **[iota/DEPLOY.md](iota/DEPLOY.md)** | `iota` |
-| Music VC | `IotaXMusic/` | **[IotaXMusic/DEPLOY.md](IotaXMusic/DEPLOY.md)** | `IotaXMusic` |
+| Bot | Folder | Deploy guide | Root Directory | Runtime |
+|-----|--------|--------------|----------------|---------|
+| Economy / games / AI | `iota/` | [iota/DEPLOY.md](iota/DEPLOY.md) | `iota` | Python |
+| Music VC | `IotaXMusic/` | [IotaXMusic/DEPLOY.md](IotaXMusic/DEPLOY.md) | `IotaXMusic` | **Docker** |
 
-Root `render.yaml` me **koi service nahi** — galti se dono ek account pe na chalein.
+Root `render.yaml` has **no services** — so a root Blueprint will not start both by mistake.
 
 ```
 GitHub monorepo (Iotaa)
         │
-        ├─► Render Account A  →  Root Dir: iota         →  iota-bot
+        ├─► Render Account A  →  Root: iota         →  iota-bot      (Python + /health)
         │
-        └─► Render Account B  →  Root Dir: IotaXMusic   →  iota-music (Docker)
+        └─► Render Account B  →  Root: IotaXMusic   →  iota-music    (Docker + /health)
 ```
 
-Same GitHub repo dono accounts se connect ho sakta hai — bas **Root Directory** alag rakho.
+Same GitHub repo can connect to both accounts — only **Root Directory** differs.
 
 ---
 
 ## Quick start
 
-### Account A — Economy
-1. Render A → New Web Service → repo  
-2. Root Directory: **`iota`**  
-3. Build / Start / Health: see [iota/DEPLOY.md](iota/DEPLOY.md)  
-4. Env: `BOT_TOKEN`, `OWNER_ID`, `MONGO_URI`, then `WEBAPP_BASE_URL`
+### Account A — Economy (`iota`)
+1. Render A → **New Web Service** → this repo  
+2. **Root Directory:** `iota`  
+3. Build: `pip install -U pip && pip install -r requirements.txt && python3 -c "from utils.font_manager import ensure_fonts; ensure_fonts()"`  
+4. Start: `sh start.sh`  
+5. Health: `/health`  
+6. Env: `BOT_TOKEN`, `OWNER_ID`, `MONGO_URI`  
+7. After first deploy: `WEBAPP_BASE_URL=https://YOUR-iota-bot.onrender.com` → redeploy  
 
-### Account B — Music
-1. Render B → New Web Service → **same** repo (optional)  
-2. Root Directory: **`IotaXMusic`**  
-3. **Docker** + Dockerfile `./Dockerfile`  
-4. Env: `API_ID`, `API_HASH`, `BOT_TOKEN`, `STRING_SESSION`, `MONGO_DB_URI`, `COOKIE_URL`  
-5. Details: [IotaXMusic/DEPLOY.md](IotaXMusic/DEPLOY.md)
+### Account B — Music (`IotaXMusic`)
+1. Render B (different account) → **New Web Service**  
+2. **Root Directory:** `IotaXMusic`  
+3. **Environment: Docker** · Dockerfile `./Dockerfile`  
+4. Health: `/health`  
+5. Env: `API_ID`, `API_HASH`, `BOT_TOKEN`, `OWNER_ID`, `STRING_SESSION`, `MONGO_DB_URI`  
+6. Cookies: Secret File `cookies.txt` **or** `COOKIE_URL`  
+7. Details: [IotaXMusic/DEPLOY.md](IotaXMusic/DEPLOY.md)
 
 ---
 
-## 24/7 (dono me built-in)
+## 24/7 (both bots)
 
-- `/health` endpoint  
-- Self-ping every ~5 minutes (Render free sleep rokne ke liye)  
-- Extra: UptimeRobot → `https://YOUR.onrender.com/health` every 5 min  
+| Feature | Economy (`iota`) | Music (`IotaXMusic`) |
+|---------|------------------|----------------------|
+| `/health` | yes | yes |
+| Self-ping every 5 min | yes (`RENDER_EXTERNAL_URL` / `WEBAPP_BASE_URL`) | yes (`RENDER_EXTERNAL_URL` / `KEEPALIVE_URL`) |
+| Extra monitor | UptimeRobot → `/health` | UptimeRobot → `/health` |
+
+Free tier may still restart; for serious 24/7 VC use a paid instance.
 
 ---
 
 ## Security
 
-Kabhi git me mat daalo: `.env`, `cookies.txt`, `*.session`, `iota/config.py` secrets.
-
-Agar leak ho: BotFather token / Mongo password / session rotate karo.
+Never git-commit: `.env`, `cookies.txt`, `*.session`, secret `config.py` values.  
+If leaked: rotate tokens / Mongo / sessions.

@@ -1,18 +1,19 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # IOTA MUSIC BOT — standalone Render Blueprint (separate account from iota)
 # ═══════════════════════════════════════════════════════════════════════════
-# Use this file with a SEPARATE Render account (not shared with economy bot).
+# Root Directory on Render MUST be: IotaXMusic
 #
 # Option A — Blueprint:
 #   Render → New → Blueprint → repo → Root Directory: IotaXMusic
 #
-# Option B — Manual Web Service (recommended for Docker):
+# Option B — Manual Web Service (recommended):
 #   Root Directory: IotaXMusic
 #   Environment: Docker
 #   Dockerfile path: ./Dockerfile
 #   Health check: /health
 #
-# Independent of iota/ economy bot. Lower load = one bot per free instance.
+# 24/7 free: /health + self-ping every 5 min (RENDER_EXTERNAL_URL auto).
+# Independent of iota/ economy bot — use a SEPARATE Render account.
 # ═══════════════════════════════════════════════════════════════════════════
 
 services:
@@ -22,14 +23,16 @@ services:
     plan: free
     region: oregon
     branch: main
-    # When Root Directory = IotaXMusic, do NOT set rootDir.
-    # dockerfilePath is relative to that root:
+    # When Root Directory = IotaXMusic, paths are relative to that folder:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: PORT
         value: "8080"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      # Required
       - key: API_ID
         sync: false
       - key: API_HASH
@@ -42,12 +45,21 @@ services:
         sync: false
       - key: MONGO_DB_URI
         sync: false
+      # Recommended
       - key: LOGGER_ID
-        sync: false
-      - key: COOKIE_URL
-        sync: false
+        value: "0"
       - key: BOT_USERNAME
         value: Iotamusicbot
+      # Cookies: COOKIE_URL (raw paste) OR Render Secret File cookies.txt
+      - key: COOKIE_URL
+        sync: false
+      - key: COOKIE_FILE
+        value: /etc/secrets/cookies.txt
+      # After first deploy, optional explicit keep-alive if needed:
+      # KEEPALIVE_URL=https://iota-music-xxxx.onrender.com
+      - key: KEEPALIVE_URL
+        sync: false
+      # Optional extras
       - key: STRING2
         sync: false
       - key: SPOTIFY_CLIENT_ID
@@ -56,3 +68,9 @@ services:
         sync: false
       - key: AI_API_KEY
         sync: false
+      - key: OPENROUTER_KEY
+        sync: false
+      - key: SUPPORT_CHAT
+        value: https://t.me/samvadacha_chat
+      - key: SUPPORT_CHANNEL
+        value: https://t.me/IotaUpdates
