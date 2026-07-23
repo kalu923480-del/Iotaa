@@ -216,21 +216,68 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         )
 
 async def setemoji_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the emoji shown before your name on /bal, /profile, leaderboards.
+
+    • Setting requires active Premium (/pay).
+    • Once set, the emoji stays forever — even after premium expires.
+    • Clear with: /setemoji clear
+    """
     u = update.effective_user
     await ensure_user(u.id, u.username or "", u.full_name)
     d = await get_user(u.id)
-    if not d.get("is_premium"):
-        await update.message.reply_html(
-            f"💓 {sc('Only Premium Users Can Set Custom Emoji.')}\n👉 /pay"
-        ); return
+    current = (d.get("premium_emoji") or "").strip() or "none"
+
     if not context.args:
         await update.message.reply_html(
-            f"Current emoji: <b>{d.get('premium_emoji','none')}</b>\n"
-            "Usage: /setemoji 😎"
-        ); return
-    emoji = context.args[0]
+            f"Current name emoji: <b>{current}</b>\n"
+            f"Usage: /setemoji 😎\n"
+            f"Clear: /setemoji clear\n\n"
+            f"<i>Setting requires Premium. After set, emoji stays even if premium ends.</i>"
+        )
+        return
+
+    raw = " ".join(context.args).strip()
+    if raw.lower() in ("clear", "reset", "none", "off", "remove"):
+        # Clearing also requires premium (so people can't grief by clearing others — own only)
+        if not d.get("is_premium") and not current:
+            await update.message.reply_html(
+                f"💓 {sc('Only Premium Users Can Manage Custom Emoji.')}\n👉 /pay"
+            )
+            return
+        if not d.get("is_premium"):
+            # Allow viewing; clear only if premium OR keep permanent once set
+            # User asked: emoji stays after premium ends — so clear should also
+            # require premium to avoid accidental permanent lock without control.
+            await update.message.reply_html(
+                f"💓 Premium chahiye emoji clear karne ke liye.\n👉 /pay"
+            )
+            return
+        await update_user(u.id, premium_emoji="")
+        await update.message.reply_html("✅ Name emoji cleared. Default 👤 / 💓 wapas.")
+        return
+
+    if not d.get("is_premium"):
+        await update.message.reply_html(
+            f"💓 {sc('Only Premium Users Can Set Custom Emoji.')}\n"
+            f"Current (locked): <b>{current}</b>\n👉 /pay"
+        )
+        return
+
+    # Single emoji / short custom mark (max ~8 chars to block spam titles)
+    emoji = raw.split()[0]
+    if len(emoji) > 16:
+        await update.message.reply_html("❌ Emoji too long. Use a short emoji like 👑 or 😎")
+        return
+    if emoji.startswith("[") and emoji.endswith("]"):
+        await update.message.reply_html("❌ Use a real emoji, not a title. Titles: /shop")
+        return
+
     await update_user(u.id, premium_emoji=emoji)
-    await update.message.reply_html(f"✅ Emoji set to <b>{emoji}</b>!")
+    await update.message.reply_html(
+        f"✅ Name emoji set to <b>{emoji}</b>!\n"
+        f"Ye /bal, /profile aur leaderboards pe dikhega — "
+        f"premium khatam hone ke baad bhi rahega."
+    )
 
 async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """

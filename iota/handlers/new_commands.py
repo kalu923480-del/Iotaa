@@ -487,15 +487,22 @@ async def global_rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     top = await db.users.find(
         {"is_banned": {"$ne": True}},
-        {"_id": 1, sort_field: 1, "full_name": 1, "username": 1}
+        {
+            "_id": 1, sort_field: 1, "full_name": 1, "username": 1,
+            "premium_emoji": 1, "is_premium": 1,
+        },
     ).sort(sort_field, -1).limit(10).to_list(10)
 
+    from utils.helpers import user_icon, mention_id
     lines = [f"🏆 <b>IOTA Global Leaderboard — {title_map[category]}</b>\n"]
     for i, user in enumerate(top):
         val   = user.get(sort_field, 0)
-        name  = (user.get("full_name") or user.get("username") or "User")[:15]
-        emoji = medals[i] if i < len(medals) else f"{i+1}."
-        lines.append(f"{emoji} <b>{name}</b> — {fmt(val)}")
+        name  = (user.get("full_name") or user.get("username") or "User")[:20]
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        icon  = user_icon(user)
+        lines.append(
+            f"{medal} {icon} {mention_id(user['_id'], name)} — {fmt(val)}"
+        )
 
     lines.append(f"\n📋 Categories: /global_rank coins | xp | kills")
     await update.message.reply_html("\n".join(lines))

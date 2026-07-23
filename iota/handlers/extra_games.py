@@ -688,9 +688,10 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.mongo_db import get_card_rank, get_user_rank
     cr   = await get_card_rank(tu.id)
     rank = await get_user_rank(tu.id)
-    icon = d.get("premium_emoji") or ("💓" if d["is_premium"] else "👤")
+    from utils.helpers import user_icon
+    icon = user_icon(d)
     caption = (
-        f"🌟 <b>USER PROFILE: {mention(tu)}</b> 🌟\n\n"
+        f"🌟 <b>USER PROFILE: {icon} {mention(tu)}</b> 🌟\n\n"
         f"════ 💰 Global Wallet ════\n"
         f"💰 Balance: <b>{fmt(d['balance'])}</b>\n"
         f"💎 Gems: <b>{d['gems']}</b>\n"
@@ -758,7 +759,8 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ You don't have enough TalkCoins for this!\n"
                 f"Need: {fmt(price)} | Have: {fmt(d['balance'])}"
             ); return
-        await update_user(u.id, balance=d["balance"]-price, premium_emoji=f"[{title}]")
+        # Titles go to custom_title — never overwrite premium_emoji (name icon).
+        await update_user(u.id, balance=d["balance"] - price, custom_title=title)
         await update.message.reply_html(
             f"✅ {mention(u)} bought title: <b>{title}</b>! {fmt(price)} spent."
         )

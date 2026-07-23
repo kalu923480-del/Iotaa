@@ -51,8 +51,23 @@ def rank_title(lv: int) -> str:
     return t.get(min(lv,10),"Emperor")
 
 def user_icon(u: dict) -> str:
-    if u.get("premium_emoji"): return u["premium_emoji"]
-    return "💓" if u.get("is_premium") else "👤"
+    """Emoji shown before a user's name on profile/balance/leaderboards.
+
+    Rules (user request):
+      • If the user has ever set/bought a custom emoji (`premium_emoji`),
+        ALWAYS show it — even after premium pack expires.
+      • Active premium without a custom emoji → default premium heart.
+      • Normal users → 👤
+    """
+    if not isinstance(u, dict):
+        return "👤"
+    custom = (u.get("premium_emoji") or "").strip()
+    # Ignore legacy shop titles accidentally stored as "[Legend]" etc.
+    if custom and not (custom.startswith("[") and custom.endswith("]")):
+        return custom
+    if u.get("is_premium"):
+        return "💓"
+    return "👤"
 
 async def get_profile_photo_id(context, uid: int):
     """

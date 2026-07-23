@@ -162,7 +162,7 @@ CATALOG = {
 
     # ── Premium ──────────────────────────────────────────────────────
     "check": ["Premium", "Check your premium/protection status privately."],
-    "setemoji": ["Premium", "Set your custom premium emoji."],
+    "setemoji": ["Premium", "Set name emoji (stays after premium ends). /setemoji 👑 or clear."],
 
     # ── Games ────────────────────────────────────────────────────────
     "chess": ["Games", "Play chess with another user."],
@@ -398,7 +398,7 @@ CATALOG = {
     "stickerpacks": ["Stickers", "List saved sticker packs."],
     "previewsticker": ["Owner Systems", "Preview a mood's stickers."],
     "clearstickers": ["Stickers", "Wipe a sticker mood."],
-    "setemoji": ["Stickers", "Set custom premium emoji."],
+    "setemoji": ["Stickers", "Set name emoji (kept after premium ends)."],
 
     # ── Items / Shop ────────────────────────────────────────────────
     "items": ["Items", "List available gift items."],

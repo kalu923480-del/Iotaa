@@ -293,8 +293,10 @@ async def bal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_icon = "🔓"
         status = sc("Alive")
 
+    from utils.helpers import user_icon
+    name_icon = user_icon(d)
     await msg.reply_html(
-        f"👤 {bold_sc('Name')}: {mention(tu)}\n"
+        f"{name_icon} {bold_sc('Name')}: {mention(tu)}\n"
         f"💰 {bold_sc('Balance')}: {fmt(d.get('balance', 0))}\n"
         f"🏆 {bold_sc('Global Rank')}: #{rank}\n"
         f"{status_icon} {bold_sc('Status')}: {status}\n"
@@ -555,11 +557,12 @@ async def toprich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await get_top_rich(10)
     medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
     text = f"🏆 <b>{sc('Top 10 Richest Users')}:</b>\n\n"
+    from utils.helpers import user_icon
     for i, r in enumerate(rows):
-        icon = r.get("premium_emoji") or ("💓" if r.get("is_premium") else "👤")
+        icon = user_icon(r)
         name = r.get("full_name") or r.get("username") or "User"
         text += f"{medals[i]} {icon} {mention_id(r['_id'],name)}: <b>{fmt(r.get('tb', r.get('balance', 0)))}</b>\n"
-    text += f"\n💓 = {sc('Premium')} • 👤 = {sc('Normal')}\n✅ {sc('Upgrade To Premium')}: /pay"
+    text += f"\n💓 = {sc('Premium')} • 👤 = {sc('Normal')} • custom emoji = set via /setemoji\n✅ {sc('Upgrade To Premium')}: /pay"
     await update.message.reply_html(text)
 
 @economy_gate
@@ -567,8 +570,9 @@ async def topkill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await get_top_kill(10)
     medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
     text = f"💀 <b>{sc('Top 10 Killers')}:</b>\n\n"
+    from utils.helpers import user_icon
     for i, r in enumerate(rows):
-        icon = r.get("premium_emoji") or ("💓" if r.get("is_premium") else "👤")
+        icon = user_icon(r)
         name = r.get("full_name") or r.get("username") or "User"
         text += f"{medals[i]} {icon} {mention_id(r['_id'],name)}: <b>{r['kills']} kills</b>\n"
     await update.message.reply_html(text)
@@ -615,9 +619,11 @@ async def rank_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user(tu.id, tu.username or "", tu.full_name)
     cr = await get_card_rank(tu.id)
     pos, total = await get_card_rank_position(tu.id)
+    d = await get_user(tu.id)
+    from utils.helpers import user_icon
     await msg.reply_html(
         f"🃏 <b>{sc('Card Rank')}</b>\n\n"
-        f"👤 {mention(tu)}\n"
+        f"{user_icon(d)} {mention(tu)}\n"
         f"👉 {sc('Wins')}: {cr['wins']} || {sc('Losses')}: {cr['losses']}\n"
         f"💰 {sc('Amount Won')}: {fmt(cr['won_amount'])}\n"
         f"💸 {sc('Amount Lost')}: {fmt(cr['lost_amount'])}\n"
@@ -638,8 +644,9 @@ async def pfp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = await get_user(tu.id); now = ts()
     dk_max = DAILY_KILLS_PREMIUM if d.get("is_premium") else DAILY_KILLS_NORMAL
     dr_max = DAILY_ROBS_PREMIUM  if d.get("is_premium") else DAILY_ROBS_NORMAL
+    from utils.helpers import user_icon
     caption = (
-        f"📊 <b>{sc('Stats')} — {mention(tu)}</b>\n\n"
+        f"📊 <b>{sc('Stats')} — {user_icon(d)} {mention(tu)}</b>\n\n"
         f"☠️ {sc('Daily Kills')}: {d.get('daily_kills',0)}/{dk_max}\n"
         f"🔪 {sc('Daily Robs')}: {d.get('daily_robs',0)}/{dr_max}\n"
         f"💎 {sc('Gems')}: {d.get('gems',0)}\n"
