@@ -339,6 +339,25 @@ class Call:
                     )
                 await assistant.play(chat_id, bare)
                 await _apply_volume(assistant, chat_id)
+            except NoAudioSourceFound:
+                # Still failing — force local download fallback
+                try:
+                    if "=" in link:
+                        vid = link.split("v=")[-1].split("&")[0]
+                    else:
+                        vid = link.split("/")[-1].split("?")[0]
+                    file_path, _ = await YouTube.download(
+                        vid, None, video=bool(video), videoid=str(vid)
+                    )
+                    if not file_path:
+                        raise AssistantErr(_["call_11"])
+                    fallback = dynamic_media_stream(path=file_path, video=bool(video))
+                    await assistant.play(chat_id, fallback)
+                    await _apply_volume(assistant, chat_id)
+                except AssistantErr:
+                    raise
+                except Exception:
+                    raise AssistantErr(_["call_11"])
             except Exception:
                 raise AssistantErr(_["call_11"])
         except (NoActiveGroupCall, ChatAdminRequired):
@@ -424,6 +443,24 @@ class Call:
                 try:
                     await client.play(chat_id, stream)
                     await _apply_volume(client, chat_id)
+                except NoAudioSourceFound:
+                    try:
+                        file_path, _ = await YouTube.download(
+                            videoid, None, video=video, videoid=videoid
+                        )
+                        if not file_path:
+                            return await app.send_message(original_chat_id, text=_["call_6"])
+                        stream = dynamic_media_stream(path=file_path, video=video)
+                        await client.play(chat_id, stream)
+                        await _apply_volume(client, chat_id)
+                    except NoAudioSourceFound:
+                        return await app.send_message(original_chat_id, text=_["call_11"])
+                    except (NoActiveGroupCall, ChatAdminRequired):
+                        return await app.send_message(original_chat_id, text=_["call_12"])
+                    except (ConnectionNotFound, TelegramServerError):
+                        return await app.send_message(original_chat_id, text=_["call_10"])
+                    except Exception:
+                        return await app.send_message(original_chat_id, text=_["call_6"])
                 except Exception:
                     return await app.send_message(original_chat_id, text=_["call_6"])
 
