@@ -66,10 +66,19 @@ def _js_runtime_args() -> List[str]:
 
 
 async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
+    # Prefer python -m yt_dlp so PATH/deno issues don't break metadata
+    argv = list(args)
+    if argv and argv[0] == "yt-dlp":
+        argv = ["python3", "-m", "yt_dlp", *argv[1:]]
+    env = os.environ.copy()
+    deno_home = os.path.expanduser("~/.deno/bin")
+    if os.path.isdir(deno_home):
+        env["PATH"] = deno_home + os.pathsep + env.get("PATH", "")
     proc = await asyncio.create_subprocess_exec(
-        *args,
+        *argv,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     try:
         return await asyncio.wait_for(proc.communicate(), timeout=YTDLP_TIMEOUT)
@@ -77,6 +86,32 @@ async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
         with contextlib.suppress(Exception):
             proc.kill()
         return b"", b"timeout"
+
+
+async def _ytdlp_dump_json(target: str, *, flat: bool = False) -> Optional[Dict]:
+    """Reliable metadata via yt-dlp (cookies + deno)."""
+    args = [
+        "yt-dlp",
+        *(_cookies_args()),
+        *(_js_runtime_args()),
+        "--dump-json",
+        "--no-warnings",
+        "--no-update",
+        "--skip-download",
+        "--socket-timeout",
+        "25",
+    ]
+    if flat:
+        args.append("--flat-playlist")
+    args.append(target)
+    stdout, stderr = await _exec_proc(*args)
+    if not stdout:
+        return None
+    try:
+        first = stdout.decode(errors="ignore").strip().splitlines()[0]
+        return json.loads(first)
+    except Exception:
+        return None
 
 
 @capture_internal_err
@@ -93,11 +128,18 @@ async def cached_youtube_search(query: str) -> List[Dict]:
         if len(_cache) > YOUTUBE_META_MAX:
             _cache.clear()
 
+    result: List[Dict] = []
     try:
         data = await VideosSearch(query, limit=1).next()
-        result = data.get("result", [])
+        result = data.get("result", []) or []
     except Exception:
         result = []
+
+    # Fallback: yt-dlp search if shim empty
+    if not result:
+        info = await _ytdlp_dump_json(f"ytsearch1:{query}", flat=True)
+        if info:
+            result = [info]
 
     if result:
         async with _cache_lock:
@@ -117,12 +159,20 @@ class YouTubeAPI:
         if isinstance(videoid, str) and videoid.strip():
             link = self.base_url + videoid.strip()
 
-        link = link.strip()
+        link = (link or "").strip()
+
+        # bare 11-char video id
+        if YOUTUBE_ID_RE.fullmatch(link):
+            return self.base_url + link
 
         if "youtu.be" in link:
             link = self.base_url + link.split("/")[-1].split("?")[0]
         elif "youtube.com/shorts/" in link or "youtube.com/live/" in link:
             link = self.base_url + link.split("/")[-1].split("?")[0]
+        elif "youtube.com/watch" in link and "v=" in link:
+            vid = link.split("v=")[-1].split("&")[0].split("#")[0]
+            if YOUTUBE_ID_RE.fullmatch(vid):
+                return self.base_url + vid
 
         return link.split("&")[0]
 
@@ -146,6 +196,8 @@ class YouTubeAPI:
 
     async def _ensure_watch_url(self, maybe_query_or_url: str) -> Optional[str]:
         prepared = self._prepare_link(maybe_query_or_url)
+        if prepared.startswith("http") and self._url_pattern.search(prepared):
+            return prepared
         if prepared.startswith("http"):
             return prepared
         data = await cached_youtube_search(prepared)
@@ -158,7 +210,22 @@ class YouTubeAPI:
     @capture_internal_err
     async def _fetch_video_info(self, query: str, *, use_cache: bool = True) -> Optional[Dict]:
         q = self._prepare_link(query)
-        if use_cache and not q.startswith("http"):
+        # Direct watch URL / id → yt-dlp first (reliable with cookies)
+        if q.startswith("http") or YOUTUBE_ID_RE.fullmatch(q.replace(self.base_url, "")):
+            target = q if q.startswith("http") else self.base_url + q
+            info = await _ytdlp_dump_json(target)
+            if info:
+                return info
+            # last resort search shim
+            try:
+                data = await VideosSearch(target, limit=1).next()
+                res = data.get("result") or []
+                return res[0] if res else None
+            except Exception:
+                return None
+
+        # Text query
+        if use_cache:
             res = await cached_youtube_search(q)
             return res[0] if res else None
         data = await VideosSearch(q, limit=1).next()
@@ -168,38 +235,39 @@ class YouTubeAPI:
     @capture_internal_err
     async def is_live(self, link: str) -> bool:
         prepared = self._prepare_link(link)
-        stdout, _ = await _exec_proc(
-            "yt-dlp", *(_cookies_args()), *(_js_runtime_args()), "--dump-json", prepared
-        )
-        if not stdout:
-            return False
-        try:
-            info = json.loads(stdout.decode())
-            return bool(info.get("is_live"))
-        except json.JSONDecodeError:
-            return False
+        info = await _ytdlp_dump_json(prepared)
+        return bool(info and info.get("is_live"))
 
     @capture_internal_err
     async def details(
         self, link: str, videoid: Union[str, bool, None] = None
     ) -> Tuple[str, Optional[str], int, str, str]:
         prepared_link = self._prepare_link(link, videoid)
-
-        try:
-            info = await self._fetch_video_info(prepared_link)
-            if not info:
-                raise ValueError("No results from youtubesearchpython (VideosSearch)")
-        except Exception as search_err:
-            raise ValueError("Video not found", {"cause": str(search_err)}) from search_err
+        info = await self._fetch_video_info(prepared_link)
+        if not info:
+            raise ValueError("Video not found")
 
         dt = info.get("duration")
-        ds = int(time_to_seconds(dt)) if dt else 0
+        if isinstance(dt, (int, float)):
+            total = int(dt)
+            dt_str = f"{total // 60}:{total % 60:02d}"
+            ds = total
+        else:
+            dt_str = dt if isinstance(dt, str) else None
+            ds = int(time_to_seconds(dt_str)) if dt_str else 0
+        thumbs = info.get("thumbnails") or [{}]
         thumb = (
             info.get("thumbnail")
-            or info.get("thumbnails", [{}])[-1].get("url", "")
-        ).split("?")[0]
+            or (thumbs[-1].get("url") if thumbs else "")
+            or ""
+        )
+        thumb = str(thumb).split("?")[0]
+        vid = info.get("id", "")
+        if not thumb and vid:
+            from config import youtube_thumb
+            thumb = youtube_thumb(str(vid))
 
-        return info.get("title", ""), dt, ds, thumb, info.get("id", "")
+        return info.get("title", ""), dt_str, ds, thumb, vid
 
     @capture_internal_err
     async def title(self, link: str, videoid: Union[str, bool, None] = None) -> str:
@@ -247,52 +315,19 @@ class YouTubeAPI:
     async def track(self, link: str, videoid: Union[str, bool, None] = None) -> Tuple[Dict, str]:
         prepared_link = self._prepare_link(link, videoid)
 
-        try:
-            info = await self._fetch_video_info(prepared_link)
-            if not info:
-                raise ValueError(
-                    f"No results from youtubesearchpython (VideosSearch) "
-                    f"for query/URL: '{prepared_link}'"
-                )
-        except Exception as search_err:
-            ytdlp_target = (
+        info = await self._fetch_video_info(prepared_link)
+        if not info:
+            # Explicit yt-dlp fallback for text queries / edge cases
+            target = (
                 prepared_link
                 if prepared_link.startswith("http")
                 else f"ytsearch1:{prepared_link}"
             )
-            args = [
-                "yt-dlp",
-                *(_cookies_args()),
-                *(_js_runtime_args()),
-                "--dump-json",
-                "--no-warnings",
-                "--no-update",
-            ]
-            if not prepared_link.startswith("http"):
-                args.append("--flat-playlist")
-            args.append(ytdlp_target)
-            stdout, stderr = await _exec_proc(*args)
-
-            def _both_failed(details: str, search_err: Exception = search_err) -> ValueError:
-                return ValueError(
-                    f"Both methods failed for '{prepared_link}':\n"
-                    f"  1. search error: {search_err}\n"
-                    f"{details}"
-                )
-
-            if not stdout:
-                stderr_msg = stderr.decode().strip() if stderr else "Empty response"
-                raise _both_failed(f"  2. yt-dlp error: {stderr_msg}")
-
-            try:
-                first_line = stdout.decode().strip().splitlines()[0]
-                info = json.loads(first_line)
-            except (json.JSONDecodeError, IndexError) as json_err:
-                raw = stdout.decode()[:400]
-                raise _both_failed(
-                    f"  2. yt-dlp JSON error: {json_err}\n"
-                    f"     Raw: {raw}..."
-                ) from json_err
+            info = await _ytdlp_dump_json(
+                target, flat=not prepared_link.startswith("http")
+            )
+        if not info:
+            raise ValueError(f"Could not resolve track: {prepared_link}")
 
         thumbs = info.get("thumbnails") or [{}]
         thumb_raw = info.get("thumbnail") or (thumbs[-1].get("url") if thumbs else "") or ""
@@ -306,6 +341,9 @@ class YouTubeAPI:
         )
         if link_out and not str(link_out).startswith("http") and vidid:
             link_out = self.base_url + vidid
+        if not thumb and vidid:
+            from config import youtube_thumb
+            thumb = youtube_thumb(str(vidid))
         dur = info.get("duration")
         if isinstance(dur, (int, float)):
             total = int(dur)
@@ -326,15 +364,27 @@ class YouTubeAPI:
     @capture_internal_err
     async def video(self, link: str, videoid: Union[str, bool, None] = None) -> Tuple[int, str]:
         link = self._prepare_link(link, videoid)
-        stdout, stderr = await _exec_proc(
-            "yt-dlp",
-            *(_cookies_args()), *(_js_runtime_args()),
-            "-g",
-            "-f",
-            "best[height<=?720][width<=?1280]",
-            link,
-        )
-        return (1, stdout.decode().split("\n")[0]) if stdout else (0, stderr.decode())
+        # Prefer audio-capable progressive / bestaudio for VC
+        for fmt in (
+            "bestaudio[ext=m4a]/bestaudio/best",
+            "best[height<=?720][width<=?1280]/best",
+        ):
+            stdout, stderr = await _exec_proc(
+                "yt-dlp",
+                *(_cookies_args()),
+                *(_js_runtime_args()),
+                "-g",
+                "-f",
+                fmt,
+                "--no-warnings",
+                "--no-update",
+                link,
+            )
+            if stdout:
+                url = stdout.decode().strip().split("\n")[0].strip()
+                if url.startswith("http"):
+                    return 1, url
+        return 0, (stderr.decode() if stderr else "no stream url")
 
     @capture_internal_err
     async def playlist(
