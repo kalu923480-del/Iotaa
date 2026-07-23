@@ -44,8 +44,17 @@ async def put_queue(
             db[chat_id] = []
             db[chat_id].append(put)
     else:
+        if chat_id not in db:
+            db[chat_id] = []
         db[chat_id].append(put)
     autoclean.append(file)
+    try:
+        from IotaXMedia.plugins.tools.history import push_history
+        asyncio.create_task(
+            push_history(chat_id, title, str(vidid or ""), str(user or ""))
+        )
+    except Exception:
+        pass
 
 
 async def put_queue_index(
