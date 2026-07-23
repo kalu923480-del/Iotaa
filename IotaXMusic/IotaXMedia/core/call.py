@@ -39,30 +39,36 @@ from IotaXMedia.utils.errors import capture_internal_err
 autoend = {}
 counter = {}
 
-# Stable stereo 48 kHz + smooth loudness (dynaudnorm = real-time)
-# PyTgCalls ffmpeg_parameters sections: default=start (before -i),
-# ---mid (after -i). Audio filters MUST be in ---mid or ffmpeg dies and VC drops.
-_AUDIO_AF = (
+# Local files: light stereo normalize. Remote googlevideo URLs: NO -af
+# (filters on signed URLs often break probe → NoAudioSourceFound).
+_AUDIO_AF_LOCAL = (
     "aresample=async=1:first_pts=0:out_sample_rate=48000,"
-    "aformat=sample_fmts=s16:channel_layouts=stereo,"
-    "dynaudnorm=f=150:g=15:p=0.95"
+    "aformat=sample_fmts=s16:channel_layouts=stereo"
 )
 
 
-def _merge_ffmpeg_params(extra: str | None = None) -> str | None:
+def _is_remote(path: str) -> bool:
+    p = (path or "").strip().lower()
+    return p.startswith("http://") or p.startswith("https://")
+
+
+def _merge_ffmpeg_params(
+    extra: str | None = None,
+    *,
+    remote: bool = False,
+) -> str | None:
     """
-    Build PyTgCalls-compatible ffmpeg_parameters.
-    Seek flags (-ss/-to) stay in :start (before -i).
-    Audio filters go in ---mid (after -i) — required by pytgcalls parser.
+    PyTgCalls ffmpeg_parameters: seek flags before -i; filters only in ---mid.
+    Remote streams skip -af to avoid NoAudioSourceFound on googlevideo.
     """
     start_bits: list[str] = []
-    mid_bits: list[str] = [f"-af {_AUDIO_AF}"] if getattr(config, "AUDIO_NORMALIZE", True) else []
+    mid_bits: list[str] = []
 
-    if extra:
-        # Keep seek/input options in start; never put -af before -i
-        tokens = extra.strip()
-        if tokens:
-            start_bits.append(tokens)
+    if extra and extra.strip():
+        start_bits.append(extra.strip())
+
+    if not remote and getattr(config, "AUDIO_NORMALIZE", True):
+        mid_bits.append(f"-af {_AUDIO_AF_LOCAL}")
 
     parts: list[str] = []
     if start_bits:
@@ -74,11 +80,13 @@ def _merge_ffmpeg_params(extra: str | None = None) -> str | None:
 
 
 def dynamic_media_stream(path: str, video: bool = False, ffmpeg_params: str = None) -> MediaStream:
-    params = _merge_ffmpeg_params(ffmpeg_params)
+    remote = _is_remote(str(path))
+    params = _merge_ffmpeg_params(ffmpeg_params, remote=remote)
+    # Prefer plain stream for HTTP — most reliable for PyTgCalls
     if video:
         return MediaStream(
             media_path=path,
-            audio_parameters=AudioQuality.HIGH,  # 48 kHz stereo
+            audio_parameters=AudioQuality.HIGH,
             video_parameters=VideoQuality.HD_720p,
             audio_flags=MediaStream.Flags.REQUIRED,
             video_flags=MediaStream.Flags.REQUIRED,
@@ -305,22 +313,43 @@ class Call:
         assistant = await group_assistant(self, chat_id)
         lang = await get_lang(chat_id)
         _ = get_string(lang)
+        # Always try local/plain path first; if filters break remote, retry bare
         stream = dynamic_media_stream(path=link, video=bool(video))
 
         try:
             await assistant.play(chat_id, stream)
             await _apply_volume(assistant, chat_id)
+        except NoAudioSourceFound:
+            # Retry without ffmpeg filters (common on remote/signed URLs)
+            try:
+                if video:
+                    bare = MediaStream(
+                        media_path=link,
+                        audio_parameters=AudioQuality.HIGH,
+                        video_parameters=VideoQuality.HD_720p,
+                        audio_flags=MediaStream.Flags.REQUIRED,
+                        video_flags=MediaStream.Flags.REQUIRED,
+                    )
+                else:
+                    bare = MediaStream(
+                        media_path=link,
+                        audio_parameters=AudioQuality.HIGH,
+                        audio_flags=MediaStream.Flags.REQUIRED,
+                        video_flags=MediaStream.Flags.IGNORE,
+                    )
+                await assistant.play(chat_id, bare)
+                await _apply_volume(assistant, chat_id)
+            except Exception:
+                raise AssistantErr(_["call_11"])
         except (NoActiveGroupCall, ChatAdminRequired):
             raise AssistantErr(_["call_8"])
-        except NoAudioSourceFound:
-            raise AssistantErr(_["call_11"])
         except NoVideoSourceFound:
             raise AssistantErr(_["call_12"])
         except (ConnectionNotFound, TelegramServerError):
             raise AssistantErr(_["call_10"])
         except Exception as e:
             raise AssistantErr(
-                f"ᴜɴᴀʙʟᴇ ᴛᴏ ᴊᴏɪɴ ᴛʜᴇ ɢʀᴏᴜᴘ ᴄᴀʟʟ.\nRᴇᴀsᴏɴ: {e}"
+                f"Unable to join the group call.\nReason: {e}"
             )
         self.active_calls.add(chat_id)
         await add_active_chat(chat_id)

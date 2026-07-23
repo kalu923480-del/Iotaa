@@ -519,11 +519,17 @@ class YouTubeAPI:
                 return stdout.decode().split("\n")[0], None
             return None, None
 
-        p = await yt_dlp_download(link, type="audio", title=await self.title(link))
-        if p:
+        # Prefer local file (stable for VC). Title is optional — don't block download.
+        title = ""
+        try:
+            title = await self.title(link) or ""
+        except Exception:
+            title = ""
+        p = await yt_dlp_download(link, type="audio", title=title or "audio")
+        if p and os.path.exists(p) and os.path.getsize(p) > 1024:
             return p, True
-        # Prefer direct stream URL when file download is blocked (cookies)
+        # Fallback: direct stream URL (may be less stable on some hosts)
         status, stream_url = await self.video(link)
-        if status == 1 and stream_url:
+        if status == 1 and stream_url and str(stream_url).startswith("http"):
             return stream_url, None
         return None, None

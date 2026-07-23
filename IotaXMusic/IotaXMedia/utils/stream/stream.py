@@ -225,11 +225,14 @@ async def stream(
                 f"{_['play_14']}\n\n<code>{reason[:350]}</code>"
             )
 
+        # Always queue real path/URL so skip/replay don't re-resolve poorly
+        queued = file_path if file_path else f"vid_{vidid}"
+
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
                 original_chat_id,
-                file_path if direct else f"vid_{vidid}",
+                queued,
                 title,
                 duration_min,
                 user_name,
@@ -257,7 +260,7 @@ async def stream(
             await put_queue(
                 chat_id,
                 original_chat_id,
-                file_path if direct else f"vid_{vidid}",
+                queued,
                 title,
                 duration_min,
                 user_name,
