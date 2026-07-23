@@ -209,17 +209,14 @@ async def stream(
 
         if not file_path:
             from IotaXMedia.utils.downloader import get_last_yt_error
-            from IotaXMedia.utils.cookie_handler import COOKIE_PATH
-            import os
+            from IotaXMedia.utils.cookie_handler import resolve_cookie_path
 
             reason = get_last_yt_error()
             if not reason:
-                has_cookie = (
-                    os.path.exists(str(COOKIE_PATH))
-                    and os.path.getsize(str(COOKIE_PATH)) > 50
-                )
+                has_cookie = resolve_cookie_path() is not None
                 reason = (
-                    "YouTube blocked download (needs COOKIE_URL). "
+                    "YouTube blocked download (needs cookies: COOKIE_URL, "
+                    "COOKIE_FILE, or /etc/secrets/cookies.txt). "
                     "SoundCloud fallback also failed."
                     if not has_cookie
                     else "Download failed — cookies may be expired."

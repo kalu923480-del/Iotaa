@@ -12,7 +12,7 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from IotaXMedia.platforms.ytsearch import VideosSearch, Playlist
 
-from IotaXMedia.utils.cookie_handler import COOKIE_PATH
+from IotaXMedia.utils.cookie_handler import resolve_cookie_path
 from IotaXMedia.utils.database import is_on_off
 from IotaXMedia.utils.downloader import yt_dlp_download
 from IotaXMedia.utils.errors import capture_internal_err
@@ -34,20 +34,16 @@ YOUTUBE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 # === Helpers ===
 def _cookiefile_path() -> Optional[str]:
     """Temp copy of cookies so CLI yt-dlp cannot rewrite the master file."""
-    path = str(COOKIE_PATH)
     try:
-        if not path or not os.path.exists(path) or os.path.getsize(path) < 50:
-            return None
-        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-            head = fh.read(64)
-        if not head.lstrip().startswith("# Netscape") and "youtube.com" not in head:
-            return None
         import shutil
         import tempfile
 
+        src = resolve_cookie_path()
+        if not src:
+            return None
         fd, tmp = tempfile.mkstemp(prefix="yt_cookies_cli_", suffix=".txt")
         os.close(fd)
-        shutil.copy2(path, tmp)
+        shutil.copy2(src, tmp)
         return tmp
     except Exception:
         pass

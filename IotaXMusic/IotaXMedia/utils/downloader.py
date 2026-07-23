@@ -13,7 +13,7 @@ from aiohttp import TCPConnector
 from yt_dlp import YoutubeDL
 
 from IotaXMedia.core.dir import CACHE_DIR, DOWNLOAD_DIR
-from IotaXMedia.utils.cookie_handler import COOKIE_PATH as _COOKIES_FILE
+from IotaXMedia.utils.cookie_handler import resolve_cookie_path
 from IotaXMedia.utils.tuning import CHUNK_SIZE, SEM
 from config import API_KEY, API_URL, VIDEO_API_URL
 from IotaXMedia.logging import LOGGER
@@ -48,22 +48,16 @@ def extract_video_id(link: str) -> str:
 
 
 def get_cookie_file() -> Optional[str]:
-    """Return a writable temp copy of cookies so yt-dlp cannot corrupt the master file."""
+    """Writable temp copy of cookies (local or Render /etc/secrets)."""
     try:
-        path = str(_COOKIES_FILE) if _COOKIES_FILE else ""
-        if not path or not os.path.exists(path) or os.path.getsize(path) < 50:
-            return None
-        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-            head = fh.read(120)
-        if not head.lstrip().startswith("# Netscape") and "youtube.com" not in head:
-            return None
-        # yt-dlp rewrites cookiefile on exit — use a temp copy each time
-        import tempfile
         import shutil
 
+        src = resolve_cookie_path()
+        if not src:
+            return None
         fd, tmp = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
         os.close(fd)
-        shutil.copy2(path, tmp)
+        shutil.copy2(src, tmp)
         return tmp
     except Exception:
         pass

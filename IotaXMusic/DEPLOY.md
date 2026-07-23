@@ -34,7 +34,17 @@ Docker = `ffmpeg` + `deno` included (YouTube ke liye zaroori).
 | `STRING_SESSION` | yes | `python3 session.py` se |
 | `MONGO_DB_URI` | yes | music Mongo URI |
 | `LOGGER_ID` | recommended | log group ID, ya `0` |
-| `COOKIE_URL` | **yes for YT** | raw Netscape cookies URL |
+| `COOKIE_URL` | optional | raw Pastebin cookies URL |
+| `COOKIE_FILE` | optional | e.g. `/etc/secrets/cookies.txt` |
+
+### Render Secret File (recommended for cookies)
+
+1. Render → Service → **Environment** → **Secret Files**
+2. Filename: `cookies.txt` (Netscape format content)
+3. Mount path is automatic: `/etc/secrets/cookies.txt`
+4. Leave `COOKIE_URL` empty — bot auto-reads `/etc/secrets/cookies.txt`
+
+Priority: `COOKIE_FILE` env → `/etc/secrets/cookies.txt` → local `IotaXMedia/assets/cookies.txt` → `COOKIE_URL` fetch
 | `BOT_USERNAME` | yes | `Iotamusicbot` |
 | `PORT` | auto | Render injects |
 

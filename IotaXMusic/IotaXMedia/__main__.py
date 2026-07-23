@@ -28,24 +28,24 @@ async def init():
             "ᴀᴅᴅ STRING_SESSION ᴛᴏ .env ᴛᴏ ᴇɴᴀʙʟᴇ ɪᴛ. Bᴏᴛ ɪs sᴛɪʟʟ ʀᴜɴɴɪɴɢ."
         )
 
-    # ✅ Cookies: prefer COOKIE_URL fetch; otherwise use local cookies.txt if present
+    # Cookies: COOKIE_URL → fetch; else Render /etc/secrets or local cookies.txt
     try:
-        from IotaXMedia.utils.cookie_handler import COOKIE_PATH
-        from IotaXMedia.utils.downloader import get_cookie_file
+        from IotaXMedia.utils.cookie_handler import resolve_cookie_path
 
         if config.COOKIE_URL:
             await fetch_and_store_cookies()
-            LOGGER("IotaXMedia").info("ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs ʟᴏᴀᴅᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ ✅")
-        elif COOKIE_PATH.exists() and COOKIE_PATH.stat().st_size > 50:
-            LOGGER("IotaXMedia").info(
-                f"ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs ʟᴏᴀᴅᴇᴅ ғʀᴏᴍ ʟᴏᴄᴀʟ ғɪʟᴇ ✅ ({COOKIE_PATH})"
-            )
+            LOGGER("IotaXMedia").info("YouTube cookies loaded from COOKIE_URL")
         else:
-            LOGGER("IotaXMedia").warning(
-                "⚠️ ɴᴏ ʏᴏᴜᴛᴜʙᴇ ᴄᴏᴏᴋɪᴇs — sᴇᴛ COOKIE_URL ᴏʀ ᴘʟᴀᴄᴇ cookies.txt"
-            )
+            found = resolve_cookie_path()
+            if found:
+                LOGGER("IotaXMedia").info(f"YouTube cookies loaded from {found}")
+            else:
+                LOGGER("IotaXMedia").warning(
+                    "No YouTube cookies — set COOKIE_URL, COOKIE_FILE, "
+                    "or Render Secret File /etc/secrets/cookies.txt"
+                )
     except Exception as e:
-        LOGGER("IotaXMedia").warning(f"⚠️ᴄᴏᴏᴋɪᴇ ᴇʀʀᴏʀ: {e}")
+        LOGGER("IotaXMedia").warning(f"Cookie error: {e}")
 
 
     await sudo()
